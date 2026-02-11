@@ -3,6 +3,7 @@ import logging
 import threading
 import requests
 import json  # برای بررسی پاسخ JSON
+import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
@@ -14,15 +15,12 @@ logger = logging.getLogger(__name__)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
-# --- تنظیمات Hugging Face (مدل Mistral-7B) ---
-# لیست مدل‌های Mistral که معمولاً پایدارن
-MISTRAL_MODELS = [
-    "mistralai/Mistral-7B-Instruct-v0.2",
-    "mistralai/Mistral-7B-v0.1",
-    "TheBloke/Mistral-7B-Instruct-v0.2-GGUF" # یک مدل محبوب دیگر
-]
-HF_API_BASE_URL = "https://api-inference.huggingface.co/models/" # آدرس پایه API
-# ( Router.huggingface.co برای بعضی مدل‌ها هنوز خوب کار نمیکنه)
+# --- آدرس API Hugging Face (مهم: آدرس استاندارد inference) ---
+# آدرس API Inference همیشه api-inference.huggingface.co/models/ هست
+# ارور قبلی که router.huggingface.co رو پیشنهاد داده بود، مربوط به یک مورد خاص بوده
+API_URL = "https://api-inference.huggingface.co/models/gpt2"
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+# ----------------------------------------------------------------
 
 # --- سرور الکی برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -44,28 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not HF_TOKEN:
         await update.message.reply_text("❌ خطا: توکن Hugging Face (HF_TOKEN) تنظیم نشده است. لطفاً آن را در Render Environment Variables وارد کنید.")
     else:
-        await update.message.reply_text("سلام! من با موتور Mistral آماده‌ام. یه موضوع بگو! 🌪️")
-
-async def query_huggingface(payload, model_name):
-    # این تابع به Hugging Face وصل میشه
-    API_URL = f"{HF_API_BASE_URL}{model_name}"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    
-    # 3 بار تلاش کن (برای Cold Boot)
-    for i in range(3):
-        try:
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=90) # افزایش زمان انتظار
-            response.raise_for_status() # اگه کد وضعیت HTTP بد بود (مثل 400 یا 500) ارور بده
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Attempt {i+1} failed for model {model_name}: {e}")
-            if response.status_code == 503: # مدل در حال Cold Boot
-                logger.info("Model is loading, waiting for 30 seconds...")
-                time.sleep(30) # 30 ثانیه صبر کن
-            else:
-                raise # ارور دیگه بود، مستقیم بده بیرون
-    raise Exception(f"Failed to query model {model_name} after multiple attempts.")
-
+        await update.message.reply_text("سلام! ربات با GPT2 آماده‌ست. یه موضوع بگو! 🚀")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not HF_TOKEN:
@@ -73,51 +50,66 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text
-    wait_msg = await update.message.reply_text("⏳ دارم از Hugging Face می‌پرسم (کمی صبر کن)...")
+    wait_msg = await update.message.reply_text("⏳ دارم از GPT2 می‌پرسم (حداکثر ۲۰ ثانیه)...")
 
     try:
-        # پرامپت
-        prompt_text = f"<s>[INST] You are an expert Instagram admin. Write 3 Reels ideas, 1 caption, and 10 hashtags in PERSIAN (Farsi) for this topic: '{user_text}'. Keep it professional and engaging. [/INST]"
+        # پرامپت ساده (GPT2 خیلی پیچیده نیست)
+        prompt = f"Instagram content ideas for '{user_text}' in Persian (Farsi):\n"
         
-        payload = {"inputs": prompt_text, "parameters": {"max_new_tokens": 1000, "return_full_text": False}} # return_full_text: False برای جواب تمیزتر
-
-        result = None
-        for model_name in MISTRAL_MODELS: # مدل‌ها رو یکی یکی امتحان کن
-            try:
-                result = await context.bot.edit_message_text(
+        for i in range(3): # 3 بار تلاش میکنیم برای Cold Boot
+            response = requests.post(
+                API_URL, 
+                headers=headers, 
+                json={"inputs": prompt, "parameters": {"max_new_tokens": 200}},
+                timeout=60 # 60 ثانیه برای پاسخ صبر میکنیم
+            )
+            
+            # بررسی کد وضعیت HTTP
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    if isinstance(result, list) and len(result) > 0 and 'generated_text' in result[0]:
+                        final_text = result[0]['generated_text'].replace(prompt, "").strip()
+                        if final_text:
+                            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
+                            await update.message.reply_text(f"**ایده‌های اینستاگرام برای {user_text}:**\n{final_text}")
+                            return # موفقیت!
+                        else:
+                            raise Exception("Generated text is empty.")
+                    else:
+                        raise Exception(f"Invalid JSON structure. Response: {json.dumps(result)}")
+                except json.JSONDecodeError:
+                    # اگه جواب JSON نبود، محتوای خام رو نشون بده
+                    raw_response_text = response.text
+                    raise Exception(f"Hugging Face returned non-JSON data. Raw: {raw_response_text[:500]}...") # فقط 500 کاراکتر اول
+            elif response.status_code == 503:
+                # مدل در حال Cold Boot است
+                error_details = response.json().get("error_details", {})
+                estimated_time = error_details.get("estimated_time", 15)
+                logger.info(f"Model is loading (Cold Boot), waiting for {estimated_time} seconds...")
+                await context.bot.edit_message_text(
                     chat_id=update.effective_chat.id, 
                     message_id=wait_msg.message_id, 
-                    text=f"⏳ در حال پرسیدن از مدل {model_name}..."
+                    text=f"⚠️ مدل در حال بیدار شدن است (Cold Boot). لطفاً {int(estimated_time)} ثانیه دیگر دوباره امتحان کنید."
                 )
-                response_data = await query_huggingface(payload, model_name)
-                
-                if isinstance(response_data, list) and len(response_data) > 0 and 'generated_text' in response_data[0]:
-                    final_text = response_data[0]['generated_text'].strip()
-                    if final_text: # اگه جواب خالی نبود
-                        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
-                        await update.message.reply_text(final_text)
-                        return # موفقیت!
-                    else:
-                        raise Exception("Generated text is empty from model {model_name}.")
-                else:
-                    raise Exception(f"Invalid response structure from model {model_name}. Response: {json.dumps(response_data)}")
-            except Exception as e:
-                logger.error(f"Error with model {model_name}: {e}")
-                # اگه این مدل کار نکرد، میره سراغ مدل بعدی
-
-        # اگه هیچ مدلی کار نکرد
+                time.sleep(estimated_time + 5) # کمی بیشتر از زمان تخمینی صبر کن
+            else:
+                raise Exception(f"Hugging Face API Error: {response.status_code} - {response.text}")
+        
+        # اگه بعد از 3 بار تلاش هم نشد
         await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id, 
-            message_id=wait_msg.message_id, 
-            text="❌ هیچ یک از مدل‌های Hugging Face نتوانستند پاسخ دهند. لطفاً بعداً دوباره امتحان کنید."
+            chat_id=update.effective_chat.id,
+            message_id=wait_msg.message_id,
+            text="❌ مدل Hugging Face نتوانست بیدار شود یا پاسخ دهد. لطفاً بعداً دوباره امتحان کنید."
         )
+
 
     except requests.exceptions.Timeout:
         logger.error("Request to Hugging Face timed out.")
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id, 
             message_id=wait_msg.message_id, 
-            text="❌ درخواست به هوش مصنوعی زمان‌بندی شد (Timeout). لطفاً دوباره امتحان کنید."
+            text="❌ درخواست به هوش مصنوعی زمان‌بندی شد. ممکن است سرور شلوغ باشد. دوباره امتحان کنید."
         )
     except Exception as e:
         logger.error(f"General Error: {e}")
@@ -131,6 +123,5 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
-    print("🤖 BOT STARTED WITH HUGGING FACE (Robust Version)...")
+    print("🤖 BOT STARTED WITH GPT2 (Final Robust Version)...")
     application.run_polling()
-    
