@@ -15,7 +15,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 HF_TOKEN = os.environ.get("HF_TOKEN") # توکن Hugging Face
 
 # --- مدل کوچک و سریع Hugging Face ---
-API_URL = "https://api-inference.huggingface.co/models/gpt2" # مدل gpt2
+API_URL = "https://router.huggingface.co/models/gpt2" # مدل gpt2 (آدرس جدید)
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 # ------------------------------------
 
