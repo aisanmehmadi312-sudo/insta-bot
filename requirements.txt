@@ -1,5 +1,2 @@
 python-telegram-bot
-g4f
-curl_cffi
-typing_extensions
-requests
+openai
