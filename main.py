@@ -2,23 +2,21 @@ import os
 import logging
 import threading
 import requests
-import json  # برای بررسی پاسخ JSON
+import json
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
-# تنظیمات لاگ (برای دیدن وضعیت ربات)
+# تنظیمات لاگ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 HF_TOKEN = os.environ.get("HF_TOKEN")
 
-# --- آدرس API Hugging Face (مهم: آدرس استاندارد inference) ---
-# آدرس API Inference همیشه api-inference.huggingface.co/models/ هست
-# ارور قبلی که router.huggingface.co رو پیشنهاد داده بود، مربوط به یک مورد خاص بوده
-API_URL = "https://api-inference.huggingface.co/models/gpt2"
+# --- آدرس API Hugging Face (این بار آدرس router.huggingface.co) ---
+API_URL = "https://router.huggingface.co/models/gpt2"
 headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 # ----------------------------------------------------------------
 
@@ -42,7 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not HF_TOKEN:
         await update.message.reply_text("❌ خطا: توکن Hugging Face (HF_TOKEN) تنظیم نشده است. لطفاً آن را در Render Environment Variables وارد کنید.")
     else:
-        await update.message.reply_text("سلام! ربات با GPT2 آماده‌ست. یه موضوع بگو! 🚀")
+        await update.message.reply_text("سلام! ربات با GPT2 (آدرس جدید) آماده‌ست. یه موضوع بگو! 🚀")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not HF_TOKEN:
@@ -53,7 +51,6 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ دارم از GPT2 می‌پرسم (حداکثر ۲۰ ثانیه)...")
 
     try:
-        # پرامپت ساده (GPT2 خیلی پیچیده نیست)
         prompt = f"Instagram content ideas for '{user_text}' in Persian (Farsi):\n"
         
         for i in range(3): # 3 بار تلاش میکنیم برای Cold Boot
@@ -64,7 +61,6 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeout=60 # 60 ثانیه برای پاسخ صبر میکنیم
             )
             
-            # بررسی کد وضعیت HTTP
             if response.status_code == 200:
                 try:
                     result = response.json()
@@ -79,11 +75,9 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else:
                         raise Exception(f"Invalid JSON structure. Response: {json.dumps(result)}")
                 except json.JSONDecodeError:
-                    # اگه جواب JSON نبود، محتوای خام رو نشون بده
                     raw_response_text = response.text
-                    raise Exception(f"Hugging Face returned non-JSON data. Raw: {raw_response_text[:500]}...") # فقط 500 کاراکتر اول
-            elif response.status_code == 503:
-                # مدل در حال Cold Boot است
+                    raise Exception(f"Hugging Face returned non-JSON data. Raw: {raw_response_text[:500]}...")
+            elif response.status_code == 503: # مدل در حال Cold Boot است
                 error_details = response.json().get("error_details", {})
                 estimated_time = error_details.get("estimated_time", 15)
                 logger.info(f"Model is loading (Cold Boot), waiting for {estimated_time} seconds...")
@@ -92,11 +86,10 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message_id=wait_msg.message_id, 
                     text=f"⚠️ مدل در حال بیدار شدن است (Cold Boot). لطفاً {int(estimated_time)} ثانیه دیگر دوباره امتحان کنید."
                 )
-                time.sleep(estimated_time + 5) # کمی بیشتر از زمان تخمینی صبر کن
+                time.sleep(estimated_time + 5)
             else:
                 raise Exception(f"Hugging Face API Error: {response.status_code} - {response.text}")
         
-        # اگه بعد از 3 بار تلاش هم نشد
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=wait_msg.message_id,
