@@ -27,14 +27,13 @@ def run_fake_server():
 threading.Thread(target=run_fake_server, daemon=True).start()
 # ---------------------------------------------
 
-# اتصال به xAI (Grok) با استفاده از کتابخانه OpenAI
-# نکته: Grok با پروتکل OpenAI سازگار است
+# اتصال به xAI (Grok)
 client = None
 if XAI_API_KEY:
     try:
         client = OpenAI(
             api_key=XAI_API_KEY,
-            base_url="https://api.x.ai/v1", # آدرس سرور Grok
+            base_url="https://api.x.ai/v1",
         )
     except Exception as e:
         logger.error(f"xAI Config Error: {e}")
@@ -42,7 +41,7 @@ else:
     logger.error("❌ XAI_API_KEY not found!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! من با موتور Grok (xAI) آماده‌ام. یه موضوع بگو! 🌌")
+    await update.message.reply_text("سلام! من با موتور Grok 2 آماده‌ام. یه موضوع بگو! 🌌")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not client:
@@ -56,7 +55,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt = f"به عنوان ادمین حرفه‌ای اینستاگرام، برای موضوع '{user_text}' ۳ ایده ریلز، یک کپشن و ۱۰ هشتگ فارسی بنویس."
         
         response = client.chat.completions.create(
-            model="grok-beta", # مدل رایگان و قوی Grok
+            model="grok-2-latest", # تغییر نام مدل به نسخه جدید
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt},
@@ -70,6 +69,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Grok Error: {e}")
+        # اگه مدل grok-2-latest هم کار نکرد، ارور رو نشون بده
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id, 
             message_id=wait_msg.message_id, 
