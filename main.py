@@ -1,8 +1,8 @@
 import os
 import logging
 import threading
+import google.generativeai as genai
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from openai import OpenAI
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -11,7 +11,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-XAI_API_KEY = os.environ.get("XAI_API_KEY")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 # --- سرور الکی برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -27,58 +27,58 @@ def run_fake_server():
 threading.Thread(target=run_fake_server, daemon=True).start()
 # ---------------------------------------------
 
-# اتصال به xAI (Grok)
+# اتصال به Google Gemini
 client = None
-if XAI_API_KEY:
+model = None
+if GOOGLE_API_KEY:
     try:
-        client = OpenAI(
-            api_key=XAI_API_KEY,
-            base_url="https://api.x.ai/v1",
-        )
+        genai.configure(api_key=GOOGLE_API_KEY)
+        # اول مدل جدید و سریع Flash رو امتحان کن
+        model = genai.GenerativeModel('gemini-1.5-flash')
     except Exception as e:
-        logger.error(f"xAI Config Error: {e}")
+        logger.error(f"Google Flash Model Config Error: {e}")
+        # اگه نشد، مدل قدیمی‌تر Pro رو امتحان کن
+        try:
+            model = genai.GenerativeModel('gemini-pro')
+        except Exception as e2:
+            logger.error(f"Google Pro Model Config Error: {e2}")
 else:
-    logger.error("❌ XAI_API_KEY not found!")
+    logger.error("❌ Google API Key not found!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! من با موتور Grok 2 آماده‌ام. یه موضوع بگو! 🌌")
+    if not model:
+        await update.message.reply_text("❌ کلید Google API تنظیم نشده یا اشتباه است!")
+    else:
+        await update.message.reply_text("سلام! من با موتور Gemini آماده‌ام. یه موضوع بگو! ✨")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not client:
-        await update.message.reply_text("❌ کلید Grok تنظیم نشده است!")
+    if not model:
+        await update.message.reply_text("❌ کلید Google API تنظیم نشده است!")
         return
 
     user_text = update.message.text
-    wait_msg = await update.message.reply_text("⏳ دارم از Grok می‌پرسم...")
+    wait_msg = await update.message.reply_text("⏳ ...")
 
     try:
         prompt = f"به عنوان ادمین حرفه‌ای اینستاگرام، برای موضوع '{user_text}' ۳ ایده ریلز، یک کپشن و ۱۰ هشتگ فارسی بنویس."
         
-        response = client.chat.completions.create(
-            model="grok-2-latest", # تغییر نام مدل به نسخه جدید
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        
-        ai_reply = response.choices[0].message.content
+        response = model.generate_content(prompt)
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
-        await update.message.reply_text(ai_reply)
+        await update.message.reply_text(response.text)
 
     except Exception as e:
-        logger.error(f"Grok Error: {e}")
-        # اگه مدل grok-2-latest هم کار نکرد، ارور رو نشون بده
+        logger.error(f"Google Gemini Error: {e}")
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id, 
             message_id=wait_msg.message_id, 
-            text=f"❌ خطای Grok: {e}"
+            text=f"❌ خطای Gemini: {e}\n(مطمئن شو API Key درسته و اعتبار داره)"
         )
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
-    print("🤖 BOT STARTED WITH GROK API...")
+    print("🤖 BOT STARTED WITH GOOGLE GEMINI...")
     application.run_polling()
+    
