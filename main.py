@@ -11,7 +11,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+XAI_API_KEY = os.environ.get("XAI_API_KEY")
 
 # --- سرور الکی برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -27,37 +27,40 @@ def run_fake_server():
 threading.Thread(target=run_fake_server, daemon=True).start()
 # ---------------------------------------------
 
-# اتصال به OpenAI
+# اتصال به xAI (Grok) با استفاده از کتابخانه OpenAI
+# نکته: Grok با پروتکل OpenAI سازگار است
 client = None
-if OPENAI_API_KEY:
+if XAI_API_KEY:
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        client = OpenAI(
+            api_key=XAI_API_KEY,
+            base_url="https://api.x.ai/v1", # آدرس سرور Grok
+        )
     except Exception as e:
-        logger.error(f"OpenAI Config Error: {e}")
+        logger.error(f"xAI Config Error: {e}")
 else:
-    logger.error("❌ OpenAI API Key not found!")
+    logger.error("❌ XAI_API_KEY not found!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not client:
-        await update.message.reply_text("❌ کلید OpenAI تنظیم نشده یا اشتباه است!")
-    else:
-        await update.message.reply_text("سلام! من با موتور قدرتمند ChatGPT (OpenAI) آماده‌ام. 🚀")
+    await update.message.reply_text("سلام! من با موتور Grok (xAI) آماده‌ام. یه موضوع بگو! 🌌")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not client:
-        await update.message.reply_text("❌ کلید OpenAI تنظیم نشده است!")
+        await update.message.reply_text("❌ کلید Grok تنظیم نشده است!")
         return
 
     user_text = update.message.text
-    wait_msg = await update.message.reply_text("⏳ ...")
+    wait_msg = await update.message.reply_text("⏳ دارم از Grok می‌پرسم...")
 
     try:
         prompt = f"به عنوان ادمین حرفه‌ای اینستاگرام، برای موضوع '{user_text}' ۳ ایده ریلز، یک کپشن و ۱۰ هشتگ فارسی بنویس."
         
-        # درخواست به OpenAI
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}]
+            model="grok-beta", # مدل رایگان و قوی Grok
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ],
         )
         
         ai_reply = response.choices[0].message.content
@@ -66,17 +69,16 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(ai_reply)
 
     except Exception as e:
-        logger.error(f"OpenAI Error: {e}")
+        logger.error(f"Grok Error: {e}")
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id, 
             message_id=wait_msg.message_id, 
-            text=f"❌ خطای OpenAI: {e}\n(احتمالاً اعتبار رایگان شما تمام شده یا API Key اشتباه است)"
+            text=f"❌ خطای Grok: {e}"
         )
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
-    print("🤖 BOT STARTED WITH OPENAI API (Final Version)...")
+    print("🤖 BOT STARTED WITH GROK API...")
     application.run_polling()
-    
