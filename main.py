@@ -27,33 +27,44 @@ def run_fake_server():
 threading.Thread(target=run_fake_server, daemon=True).start()
 # ---------------------------------------------
 
-# اتصال به Google Gemini
-client = None
-model = None
-if GOOGLE_API_KEY:
+# --- تابع هوشمند برای پیدا کردن مدل فعال ---
+def find_working_gemini_model():
+    if not GOOGLE_API_KEY:
+        logger.error("Google API Key not found.")
+        return None, "کلید API گوگل تنظیم نشده است."
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        # اول مدل جدید و سریع Flash رو امتحان کن
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        logger.info("🔍 Searching for available Gemini models...")
+        # لیست تمام مدل‌ها رو بگیر
+        for m in genai.list_models():
+            # دنبال مدلی بگرد که قابلیت تولید محتوا داشته باشه
+            if 'generateContent' in m.supported_generation_methods:
+                logger.info(f"✅ Found a working model: {m.name}")
+                # اولین مدلی که پیدا شد رو برگردون
+                return genai.GenerativeModel(m.name), None
+        
+        # اگه هیچ مدلی پیدا نشد
+        logger.error("❌ No models found that support 'generateContent'.")
+        return None, "هیچ مدل فعالی برای تولید محتوا با این API Key پیدا نشد."
+
     except Exception as e:
-        logger.error(f"Google Flash Model Config Error: {e}")
-        # اگه نشد، مدل قدیمی‌تر Pro رو امتحان کن
-        try:
-            model = genai.GenerativeModel('gemini-pro')
-        except Exception as e2:
-            logger.error(f"Google Pro Model Config Error: {e2}")
-else:
-    logger.error("❌ Google API Key not found!")
+        logger.error(f"Error while finding model: {e}")
+        return None, f"خطا در اتصال به گوگل: {e}"
+
+# در ابتدای برنامه، مدل فعال را پیدا کن
+model, error_message = find_working_gemini_model()
+# --------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not model:
-        await update.message.reply_text("❌ کلید Google API تنظیم نشده یا اشتباه است!")
+    if model:
+        # اسم مدل پیدا شده رو به کاربر نشون بده
+        await update.message.reply_text(f"سلام! من با مدل '{model.model_name}' آماده‌ام. یه موضوع بگو! ✨")
     else:
-        await update.message.reply_text("سلام! من با موتور Gemini آماده‌ام. یه موضوع بگو! ✨")
+        await update.message.reply_text(f"❌ ربات نتوانست به گوگل وصل شود:\n{error_message}")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not model:
-        await update.message.reply_text("❌ کلید Google API تنظیم نشده است!")
+        await update.message.reply_text(f"❌ ربات به مدل گوگل وصل نیست:\n{error_message}")
         return
 
     user_text = update.message.text
@@ -61,9 +72,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         prompt = f"به عنوان ادمین حرفه‌ای اینستاگرام، برای موضوع '{user_text}' ۳ ایده ریلز، یک کپشن و ۱۰ هشتگ فارسی بنویس."
-        
         response = model.generate_content(prompt)
-        
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         await update.message.reply_text(response.text)
 
@@ -72,13 +81,13 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id, 
             message_id=wait_msg.message_id, 
-            text=f"❌ خطای Gemini: {e}\n(مطمئن شو API Key درسته و اعتبار داره)"
+            text=f"❌ خطای Gemini: {e}"
         )
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
-    print("🤖 BOT STARTED WITH GOOGLE GEMINI...")
+    print("🤖 BOT STARTED (Diagnostic Mode)...")
     application.run_polling()
     
