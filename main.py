@@ -1,8 +1,8 @@
 import os
 import logging
 import threading
-import google.generativeai as genai
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from openai import OpenAI
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -11,7 +11,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 # --- سرور الکی برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -27,44 +27,25 @@ def run_fake_server():
 threading.Thread(target=run_fake_server, daemon=True).start()
 # ---------------------------------------------
 
-# --- تابع هوشمند برای پیدا کردن مدل فعال ---
-def find_working_gemini_model():
-    if not GOOGLE_API_KEY:
-        logger.error("Google API Key not found.")
-        return None, "کلید API گوگل تنظیم نشده است."
+# اتصال به OpenAI
+client = None
+if OPENAI_API_KEY:
     try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        logger.info("🔍 Searching for available Gemini models...")
-        # لیست تمام مدل‌ها رو بگیر
-        for m in genai.list_models():
-            # دنبال مدلی بگرد که قابلیت تولید محتوا داشته باشه
-            if 'generateContent' in m.supported_generation_methods:
-                logger.info(f"✅ Found a working model: {m.name}")
-                # اولین مدلی که پیدا شد رو برگردون
-                return genai.GenerativeModel(m.name), None
-        
-        # اگه هیچ مدلی پیدا نشد
-        logger.error("❌ No models found that support 'generateContent'.")
-        return None, "هیچ مدل فعالی برای تولید محتوا با این API Key پیدا نشد."
-
+        client = OpenAI(api_key=OPENAI_API_KEY)
     except Exception as e:
-        logger.error(f"Error while finding model: {e}")
-        return None, f"خطا در اتصال به گوگل: {e}"
-
-# در ابتدای برنامه، مدل فعال را پیدا کن
-model, error_message = find_working_gemini_model()
-# --------------------------------------------
+        logger.error(f"OpenAI Config Error: {e}")
+else:
+    logger.error("❌ OpenAI API Key not found!")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if model:
-        # اسم مدل پیدا شده رو به کاربر نشون بده
-        await update.message.reply_text(f"سلام! من با مدل '{model.model_name}' آماده‌ام. یه موضوع بگو! ✨")
+    if not client:
+        await update.message.reply_text("❌ کلید OpenAI تنظیم نشده یا اشتباه است!")
     else:
-        await update.message.reply_text(f"❌ ربات نتوانست به گوگل وصل شود:\n{error_message}")
+        await update.message.reply_text("سلام! من با موتور قدرتمند ChatGPT (OpenAI) آماده‌ام. 🚀")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not model:
-        await update.message.reply_text(f"❌ ربات به مدل گوگل وصل نیست:\n{error_message}")
+    if not client:
+        await update.message.reply_text("❌ کلید OpenAI تنظیم نشده است!")
         return
 
     user_text = update.message.text
@@ -72,22 +53,29 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         prompt = f"به عنوان ادمین حرفه‌ای اینستاگرام، برای موضوع '{user_text}' ۳ ایده ریلز، یک کپشن و ۱۰ هشتگ فارسی بنویس."
-        response = model.generate_content(prompt)
+        
+        # درخواست به OpenAI
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        ai_reply = response.choices[0].message.content
+        
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
-        await update.message.reply_text(response.text)
+        await update.message.reply_text(ai_reply)
 
     except Exception as e:
-        logger.error(f"Google Gemini Error: {e}")
+        logger.error(f"OpenAI Error: {e}")
         await context.bot.edit_message_text(
             chat_id=update.effective_chat.id, 
             message_id=wait_msg.message_id, 
-            text=f"❌ خطای Gemini: {e}"
+            text=f"❌ خطای OpenAI: {e}"
         )
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
-    print("🤖 BOT STARTED (Diagnostic Mode)...")
+    print("🤖 BOT STARTED WITH OFFICIAL OPENAI API...")
     application.run_polling()
-    
