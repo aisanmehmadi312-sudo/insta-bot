@@ -71,10 +71,15 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['tone'] = update.message.text
     user_id = str(update.effective_user.id)
     
-    profile_data = {'user_id': user_id, 'business': context.user_data['business'], 'audience': context.user_data['audience'], 'tone': context.user_data['tone']}
+    profile_data = {
+        'user_id': user_id,
+        'business': context.user_data['business'],
+        'audience': context.user_data['audience'],
+        'tone': context.user_data['tone']
+    }
     
     try:
-        supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
+        data, count = supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         await update.message.reply_text("✅ پروفایل شما با موفقیت ذخیره/آپدیت شد!")
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
@@ -94,6 +99,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
+    # چک کردن وجود پروفایل
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
@@ -195,5 +201,8 @@ if __name__ == '__main__':
     )
     
     application.add_handler(conv_handler)
-    a
-        
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
+    
+    print("🤖 BOT STARTED WITH PROMPT ENGINEERING V2...")
+    application.run_polling()
