@@ -195,4 +195,4 @@ if __name__ == '__main__':
     
     print("🤖 BOT DEPLOYED SUCCESSFULLY WITH STRICT PROMPT!")
     application.run_polling()
-    
+                        
