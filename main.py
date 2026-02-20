@@ -112,7 +112,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
 
     try:
-        # --- پرامپت نهایی (مثبت‌گرا و متعادل) ---
+        # --- پرامپت نهایی با قانون کنترل کیفیت ---
         prompt = f"""
         **Your Primary Task:**
         You are a viral content strategist. Your job is to create a professional Instagram Reel blueprint for the user's topic, based on their profile.
@@ -124,22 +124,30 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         - **Today's Topic:** "{user_text}"
 
         ---
-        **Blueprint Structure:**
-        If the topic is relevant, you must create a script using the AIDA model (Attention, Interest, Desire, Action). The structure should be:
-        ### 🎬 Viral Reel Blueprint: [Engaging Title]
-        **1. ATTENTION (0-3s): Hook** (Visuals, On-Screen Text)
-        **2. INTEREST (4-10s): Problem/Value** (Visuals, Narration)
-        **3. DESIRE (11-20s): Solution** (Visuals, Narration)
-        **4. ACTION (21-30s): CTA** (Visuals, On-Screen Text)
-        ---
-        ### ✍️ Caption & Hashtags
-        **Caption:** [Engaging caption]
-        **Hashtags:** [5-7 hashtags]
+        **CRITICAL RULES:**
+        1.  **Relevance First:** Use common sense. If and ONLY IF the topic is completely irrelevant to the business (e.g., business is "fruit stand", topic is "car engines"), then you MUST abandon the blueprint and reply ONLY with this exact Persian sentence:
+            `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+        2.  **Markdown Quality Control:** You MUST be extremely careful with your Markdown syntax. Every `*` or `_` used for formatting must be correctly opened and closed. Double-check your response to ensure it's syntactically perfect before outputting. This is a strict technical requirement.
 
         ---
-        **EXCEPTION (Very Important!):**
-        Use common sense. If and ONLY IF it is completely impossible to connect the topic to the business (e.g., business is "selling fruit" and topic is "car engines"), then you MUST abandon the primary task and reply ONLY with this exact Persian sentence:
-        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+        **Blueprint Structure (if relevant):**
+        ### 🎬 Viral Reel Blueprint: [Engaging Title]
+        **1. ATTENTION (0-3s): Hook**
+        *   **Visual:** [Describe the first shot]
+        *   **On-Screen Text:** [A powerful sentence]
+        **2. INTEREST (4-10s): Problem/Value**
+        *   **Visual:** [Describe the shots]
+        *   **Narration:** [Explain the core idea]
+        **3. DESIRE (11-20s): Solution**
+        *   **Visual:** [Show the "aha!" moment]
+        *   **Narration:** [Explain the benefit]
+        **4. ACTION (21-30s): CTA**
+        *   **Visual:** [Final satisfying shot]
+        *   **On-Screen Text:** [e.g., "Save for later!"]
+        ---
+        ### ✍️ Caption & Hashtags
+        **Caption:** [Write an engaging caption]
+        **Hashtags:** [Provide 5-7 hashtags]
         """
         
         response = client.chat.completions.create(
@@ -150,7 +158,6 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         
-        # --- منطق اصلاح شده برای مدیریت خطا ---
         is_rejection = ai_reply.startswith(f"موضوع «{user_text}»")
         
         message_to_send = ""
@@ -160,16 +167,13 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_to_send = ai_reply
 
         try:
-            # یک بار ارسال با پوشش کامل مدیریت خطا
             await update.message.reply_text(message_to_send, parse_mode='Markdown')
         except BadRequest as e:
             if "Can't parse entities" in str(e):
-                logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
-                # در صورت خطا، پیام اصلی و خام هوش مصنوعی را بدون فرمت ارسال می‌کنیم
+                logger.warning(f"Markdown parse error despite the new rule. Sending as plain text. Error: {e}")
                 fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
                 await update.message.reply_text(fallback_text)
             else:
-                # خطاهای دیگر را به مدیریت خطای اصلی می‌سپاریم
                 raise e
 
     except Exception as e:
@@ -199,6 +203,5 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED WITH THE FINAL, POSITIVE-FIRST PROMPT!")
+    print("🤖 BOT DEPLOYED WITH MARKDOWN QUALITY CONTROL!")
     application.run_polling()
-                       
