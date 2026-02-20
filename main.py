@@ -112,7 +112,6 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
 
     try:
-        # --- پرامپت نهایی (ساده، هوشمند و متعادل) ---
         prompt = f"""
         **Your Persona:** You are a smart and practical social media strategist. Your goal is to help the user by creating high-quality, relevant content.
 
@@ -155,6 +154,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         **Hashtags:** [Provide 5-7 hashtags]
         """
         
+        # --- خط اصلاح شده ---
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
@@ -197,5 +197,14 @@ if __name__ == '__main__':
         states={
             BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
             AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
-            TONE: [MessageHandler(filters.TEXT & ~filter
+            TONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tone_and_save)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_profile)],
+    )
     
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
+    
+    print("🤖 BOT DEPLOYED WITH FINAL CORRECTED CODE!")
+    application.run_polling()
