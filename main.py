@@ -151,15 +151,11 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Error in generate_content: {e}")
-        # --- بخش اصلاح شده برای جلوگیری از خطای Message to edit not found ---
         try:
-            # سعی می‌کنیم پیام "لطفا صبر کنید" را حذف کنیم
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         except Exception as delete_error:
-            # اگر از قبل حذف شده بود، مشکلی نیست و فقط لاگ می‌گیریم
             logger.error(f"Could not delete wait message (it might be already gone): {delete_error}")
         
-        # یک پیام خطای جدید ارسال می‌کنیم
         await update.message.reply_text(f"❌ ببخشید، در پردازش درخواست شما مشکلی پیش آمد.\n\nجزئیات فنی: {e}")
 
 
@@ -180,5 +176,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT START
-    
+    print("🤖 BOT STARTED WITH FINAL FIXES...")
+    application.run_polling()
+
