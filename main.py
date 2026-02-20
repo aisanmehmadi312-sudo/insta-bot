@@ -12,34 +12,81 @@ from telegram.ext import (
     filters, ConversationHandler
 )
 
-# ... (بخش‌های اولیه کد بدون تغییر باقی می‌مانند) ...
-# --- اتصال به سرویس‌ها ---
-# ... (بدون تغییر) ...
+# تنظیمات لاگ
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- دریافت توکن‌ها ---
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# --- سرور الکی برای بیدار نگه داشتن Render ---
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_fake_server():
+    port = int(os.environ.get("PORT", 8080))
+    HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler).serve_forever()
+
+threading.Thread(target=run_fake_server, daemon=True).start()
 
 # ---------------------------------------------
-# --- تابع جدید برای ثبت آمار ---
-def log_event(user_id, event_type, content=""):
+
+# --- اتصال به سرویس‌ها ---
+client = None
+if OPENAI_API_KEY:
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception as e:
+        logger.error(f"OpenAI Config Error: {e}")
+
+supabase: Client = None
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        logger.error(f"Supabase Config Error: {e}")
+
+# ---------------------------------------------
+# --- تابع یکپارچه برای ثبت آمار ---
+def log_event(user_id: str, event_type: str, content: str = ""):
     """یک رخداد را در جدول logs در Supabase ثبت می‌کند."""
     if not supabase:
         return
     try:
-        supabase.table('logs').insert({
+        data_to_insert = {
             'user_id': str(user_id),
             'event_type': event_type,
             'content': content
-        }).execute()
+        }
+        supabase.table('logs').insert(data_to_insert).execute()
     except Exception as e:
-        logger.error(f"Supabase log error: {e}")
+        logger.error(f"Supabase log event error: {e}")
 
 # ---------------------------------------------
 
 # --- مراحل مکالمه برای ساخت پروفایل ---
+BUSINESS, AUDIENCE, TONE = range(3)
+
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    log_event(update.effective_user.id, 'profile_start') # ثبت آمار
+    log_event(update.effective_user.id, 'profile_start')
     await update.message.reply_text("خب، بیا پروفایل کسب‌وکارت رو بسازیم.\n\n**موضوع اصلی پیج شما چیست؟**", parse_mode='Markdown')
     return BUSINESS
 
-# ... (بقیه توابع پروفایل بدون تغییر) ...
+async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['business'] = update.message.text
+    await update.message.reply_text("عالی! حالا بگو **مخاطب هدفت چه کسانی هستند؟**", parse_mode='Markdown')
+    return AUDIENCE
+
+async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['audience'] = update.message.text
+    await update.message.reply_text("و در آخر، **لحن برندت چیست؟** (صمیمی، رسمی، شوخ)", parse_mode='Markdown')
+    return TONE
 
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['tone'] = update.message.text
@@ -49,20 +96,23 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
-        log_event(user_id, 'profile_saved') # ثبت آمار
+        log_event(user_id, 'profile_saved')
         await update.message.reply_text("✅ پروفایل شما با موفقیت ذخیره/آپدیت شد!")
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
         await update.message.reply_text(f"❌ خطا در ذخیره پروفایل: {e}")
     return ConversationHandler.END
 
-# ... (تابع cancel_profile بدون تغییر) ...
+async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    log_event(update.effective_user.id, 'profile_cancel')
+    await update.message.reply_text("عملیات ساخت پروفایل لغو شد.")
+    return ConversationHandler.END
 
 # ---------------------------------------------
 
 # --- دستورات اصلی ربات ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    log_event(update.effective_user.id, 'start_command') # ثبت آمار
+    log_event(update.effective_user.id, 'start_command')
     await update.message.reply_text("سلام! 👋\nبرای ساخت/ویرایش پروفایل، دستور /profile رو بزن.\nبعد از اون، هر موضوعی بفرستی، بر اساس پروفایلت برات سناریو ریلز می‌سازم.")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,17 +181,17 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         message_to_send = ""
         if is_rejection:
-            log_event(user_id, 'topic_rejected', user_text) # ثبت آمار
+            log_event(user_id, 'topic_rejected', user_text)
             message_to_send = f"**توجه:**\n{ai_reply}"
         else:
-            log_event(user_id, 'content_generated', user_text) # ثبت آمار
+            log_event(user_id, 'content_generated', user_text)
             message_to_send = ai_reply
 
         try:
             await update.message.reply_text(message_to_send, parse_mode='Markdown')
         except BadRequest as e:
             if "Can't parse entities" in str(e):
-                log_event(user_id, 'markdown_error', user_text) # ثبت آمار
+                log_event(user_id, 'markdown_error', user_text)
                 logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
                 fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
                 await update.message.reply_text(fallback_text)
@@ -149,7 +199,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise e
 
     except Exception as e:
-        log_event(user_id, 'general_error', str(e)) # ثبت آمار
+        log_event(user_id, 'general_error', str(e))
         logger.error(f"Error in generate_content: {e}")
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
@@ -160,5 +210,22 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 if __name__ == '__main__':
-    # ... (کد اصلی اجرای ربات بدون تغییر)
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('profile', profile_start)],
+        states={
+            BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
+            AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
+            TONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tone_and_save)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_profile)],
+    )
+    
+    application.add_handler(conv_handler)
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
+    
+    print("🤖 BOT DEPLOYED WITH LOGGING - FINAL & CORRECTED!")
+    application.run_polling()
     
