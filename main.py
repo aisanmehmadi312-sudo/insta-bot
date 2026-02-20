@@ -109,38 +109,62 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text
-    wait_msg = await update.message.reply_text("⏳ دارم موضوع رو با پروفایلت چک می‌کنم...")
+    wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی نقشه ساخت...")
 
     try:
-        # --- دستور (Prompt) متعادل شده ---
+        # --- پرامپت نهایی (ترکیب نگهبان + کارگردان) ---
         prompt = f"""
-        **Your Persona:** You are an intelligent content strategist. Your goal is to create relevant, viral content ideas that align with the user's brand.
+        **Your Persona:** You are a two-part AI: a strict Gatekeeper and a world-class viral video Strategist. You will perform your tasks in order.
 
-        **User's Profile:**
-        - Business Topic: {user_profile['business']}
-        
-        **User's Requested Topic:** "{user_text}"
+        **Input Data:**
+        - Business Profile: {user_profile['business']}
+        - Target Audience: {user_profile['audience']}
+        - Brand Tone: {user_profile['tone']}
+        - Today's Topic: "{user_text}"
 
         ---
-        **Your Task: Analyze and Decide**
+        **Step 1: The Gatekeeper - Relevance Check**
+        First, analyze the "Today's Topic." Is it directly and logically relevant to the "Business Profile"?
+        - **Relevant Example:** Business is "selling bananas", topic is "healthy snacks". -> This is RELEVANT.
+        - **Irrelevant Example:** Business is "selling bananas", topic is "polar bears". -> This is IRRELEVANT.
 
-        1.  **Analyze Relevance:** Look at the user's "Business Topic" and their "Requested Topic".
-            *   **Is the request relevant?** A topic is relevant if it's the core product, a related product, or a concept directly linked to the business.
-            *   **Example of RELEVANT:** If Business Topic is "Selling bananas", then "banana", "banana bread", or "healthy snacks" are all RELEVANT.
-            *   **Example of IRRELEVANT:** If Business Topic is "Selling bananas", then "polar bears" or "car repair" are IRRELEVANT.
+        If the topic is IRRELEVANT, your entire output MUST BE **ONLY** this single line:
+        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+        **Do not proceed to Step 2.**
 
-        2.  **Choose Your Output (Only one of these two options):**
+        ---
+        **Step 2: The Strategist - Viral Blueprint (ONLY if topic is RELEVANT)**
+        If the topic passed the Gatekeeper check, then generate a complete blueprint for a 15-30 second reel using the AIDA model. The output must be in Markdown and strictly follow this structure:
 
-            *   **If IRRELEVANT:** Your response MUST BE ONLY this single line of text:
-                `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+        ### 🎬 Viral Reel Blueprint: [Engaging Title for the Reel]
 
-            *   **If RELEVANT:** Then (and only then) write a full, creative reel scenario based on the user's complete profile (including audience: '{user_profile['audience']}' and tone: '{user_profile['tone']}'). Start the scenario with `### 🎬 سناریوی ریلز وایرال`.
+        **1. ATTENTION (Seconds 0-3): The Scroll-Stopping Hook**
+        *   **Visual:** [Describe the very first, specific shot.]
+        *   **On-Screen Text:** [A powerful, curiosity-driven sentence.]
+        *   **Psychology:** [Briefly explain WHY this hook works.]
 
-        Now, execute the task based on this balanced logic.
+        **2. INTEREST (Seconds 4-10): The Core Value / Problem**
+        *   **Visual:** [Describe the sequence of shots.]
+        *   **Spoken Line / Narration:** [Explain the core problem or deliver the key info.]
+
+        **3. DESIRE (Seconds 11-20): The Solution & Transformation**
+        *   **Visual:** [Show the "aha!" moment or the ideal outcome.]
+        *   **Spoken Line / Narration:** [Explain how this solution makes life better.]
+
+        **4. ACTION (Seconds 21-30): The Call to Action (CTA)**
+        *   **Visual:** [Final satisfying shot.]
+        *   **CTA On-Screen Text:** [A clear, direct call to action (e.g., "Save for later!")]
+        *   **Psychology:** [Explain the type of CTA and its benefit.]
+
+        ---
+        ### ✍️ Caption & Hashtags
+
+        **Caption:** [An engaging caption that asks a question.]
+        **Hashtags:** [5-7 relevant hashtags.]
         """
         
         response = client.chat.completions.create(
-            model="gpt-4o",  # Using a more capable model for better instruction following
+            model="gpt-4o",
             messages=[{"role": "user", "content": prompt}]
         )
         ai_reply = response.choices[0].message.content.strip()
@@ -151,14 +175,16 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_rejection = ai_reply.startswith(rejection_message_start)
 
         if is_rejection:
+            # اگر پیام رد کردن بود، آن را همانطور که هست ارسال کن
             await update.message.reply_text(f"**توجه:**\n{ai_reply}", parse_mode='Markdown')
         else:
+            # در غیر این صورت، این یک سناریوی کامل است
             try:
                 await update.message.reply_text(ai_reply, parse_mode='Markdown')
             except BadRequest as e:
                 if "Can't parse entities" in str(e):
-                    logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
-                    fallback_text = "⚠️ هوش مصنوعی یک سناریو با فرمت اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
+                    logger.warning(f"Markdown parse error on a valid scenario. Sending as plain text. Error: {e}")
+                    fallback_text = "⚠️ هوش مصنوعی یک سناریو با فرمت Markdown اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
                     await update.message.reply_text(fallback_text)
                 else:
                     raise e
@@ -190,6 +216,5 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED WITH BALANCED PROMPT!")
+    print("🤖 BOT DEPLOYED WITH HYBRID GATEKEEPER-STRATEGIST PROMPT!")
     application.run_polling()
-        
