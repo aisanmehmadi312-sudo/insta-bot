@@ -12,17 +12,17 @@ from telegram.ext import (
     filters, ConversationHandler
 )
 
-# تنظیمات لاگ
+# Setup logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- دریافت توکن‌ها ---
+# --- Environment Variables ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# --- سرور الکی برای بیدار نگه داشتن Render ---
+# --- Keep-Alive Server ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -37,7 +37,7 @@ threading.Thread(target=run_fake_server, daemon=True).start()
 
 # ---------------------------------------------
 
-# --- اتصال به سرویس‌ها ---
+# --- Service Connections ---
 client = None
 if OPENAI_API_KEY:
     try:
@@ -53,9 +53,8 @@ if SUPABASE_URL and SUPABASE_KEY:
         logger.error(f"Supabase Config Error: {e}")
 
 # ---------------------------------------------
-# --- تابع یکپارچه برای ثبت آمار ---
+# --- Analytics Logging Function ---
 def log_event(user_id: str, event_type: str, content: str = ""):
-    """یک رخداد را در جدول logs در Supabase ثبت می‌کند."""
     if not supabase:
         return
     try:
@@ -70,7 +69,7 @@ def log_event(user_id: str, event_type: str, content: str = ""):
 
 # ---------------------------------------------
 
-# --- مراحل مکالمه برای ساخت پروفایل ---
+# --- Profile Conversation ---
 BUSINESS, AUDIENCE, TONE = range(3)
 
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -110,7 +109,7 @@ async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------------------------------------
 
-# --- دستورات اصلی ربات ---
+# --- Main Bot Logic ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_event(update.effective_user.id, 'start_command')
     await update.message.reply_text("سلام! 👋\nبرای ساخت/ویرایش پروفایل، دستور /profile رو بزن.\nبعد از اون، هر موضوعی بفرستی، بر اساس پروفایلت برات سناریو ریلز می‌سازم.")
@@ -132,9 +131,10 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
 
     try:
+        # --- Final Prompt with a Self-Correction Layer ---
         prompt = f"""
         **Your Primary Task:**
-        You are a viral content strategist. Your job is to create a professional Instagram Reel blueprint for the user's topic, based on their profile.
+        As a viral content strategist, create a professional Instagram Reel blueprint for the user's topic, based on their profile.
 
         **User's Profile:**
         - **Business:** {user_profile['business']}
@@ -143,30 +143,26 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         - **Today's Topic:** "{user_text}"
 
         ---
-        **CRITICAL RULES:**
-        1.  **Relevance First:** Use common sense. If and ONLY IF the topic is completely irrelevant to the business (e.g., business is "fruit stand", topic is "car engines"), then you MUST abandon the blueprint and reply ONLY with this exact Persian sentence:
-            `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
-        2.  **Markdown Quality Control:** You MUST be extremely careful with your Markdown syntax. Every `*` or `_` used for formatting must be correctly opened and closed. Double-check your response to ensure it's syntactically perfect before outputting. This is a strict technical requirement.
+        **Execution Plan:**
 
-        ---
-        **Blueprint Structure (if relevant):**
-        ### 🎬 Viral Reel Blueprint: [Engaging Title]
-        **1. ATTENTION (0-3s): Hook**
-        *   **Visual:** [Describe the first shot]
-        *   **On-Screen Text:** [A powerful sentence]
-        **2. INTEREST (4-10s): Problem/Value**
-        *   **Visual:** [Describe the shots]
-        *   **Narration:** [Explain the core idea]
-        **3. DESIRE (11-20s): Solution**
-        *   **Visual:** [Show the "aha!" moment]
-        *   **Narration:** [Explain the benefit]
-        **4. ACTION (21-30s): CTA**
-        *   **Visual:** [Final satisfying shot]
-        *   **On-Screen Text:** [e.g., "Save for later!"]
+        **Step 1: Relevance Check.**
+        Use common sense. If the topic is completely irrelevant (e.g., business is "fruit stand", topic is "car engines"), you MUST stop and reply ONLY with this exact Persian sentence:
+        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+
+        **Step 2: Blueprint Creation (if relevant).**
+        Create the script using the AIDA model. Structure it like this:
+        ### 🎬 Viral Reel Blueprint: [Title]
+        **1. ATTENTION (0-3s): Hook** (*Visual:* ..., *On-Screen Text:* ...)
+        **2. INTEREST (4-10s): Problem/Value** (*Visual:* ..., *Narration:* ...)
+        **3. DESIRE (11-20s): Solution** (*Visual:* ..., *Narration:* ...)
+        **4. ACTION (21-30s): CTA** (*Visual:* ..., *On-Screen Text:* ...)
         ---
         ### ✍️ Caption & Hashtags
-        **Caption:** [Write an engaging caption]
-        **Hashtags:** [Provide 5-7 hashtags]
+        **Caption:** ...
+        **Hashtags:** ...
+
+        **Step 3: Final Quality Check (CRITICAL).**
+        Before you output your final response, you MUST review it for valid Markdown syntax. Ensure every asterisk `*` and every underscore `_` is part of a correctly matched pair. Your final output MUST be 100% syntactically perfect Markdown. This is a non-negotiable technical requirement.
         """
         
         response = client.chat.completions.create(
@@ -179,24 +175,25 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         is_rejection = ai_reply.startswith(f"موضوع «{user_text}»")
         
-        message_to_send = ""
-        if is_rejection:
-            log_event(user_id, 'topic_rejected', user_text)
-            message_to_send = f"**توجه:**\n{ai_reply}"
-        else:
-            log_event(user_id, 'content_generated', user_text)
-            message_to_send = ai_reply
+        message_to_send = f"**توجه:**\n{ai_reply}" if is_rejection else ai_reply
 
         try:
             await update.message.reply_text(message_to_send, parse_mode='Markdown')
+            # Log success only if the message is sent without errors
+            if not is_rejection:
+                log_event(user_id, 'content_generated_success', user_text)
         except BadRequest as e:
             if "Can't parse entities" in str(e):
                 log_event(user_id, 'markdown_error', user_text)
-                logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
-                fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
+                logger.error(f"Markdown parse error despite quality check. Error: {e}")
+                fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. این یک باگ است و به زودی رفع می‌شود. متن خام پاسخ:\n\n" + ai_reply
                 await update.message.reply_text(fallback_text)
             else:
+                # For other bad requests, re-raise the error
                 raise e
+        
+        if is_rejection:
+            log_event(user_id, 'topic_rejected', user_text)
 
     except Exception as e:
         log_event(user_id, 'general_error', str(e))
@@ -206,7 +203,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as delete_error:
             logger.error(f"Could not delete wait message: {delete_error}")
         
-        await update.message.reply_text(f"❌ ببخشید، در پردازش درخواست شما مشکلی پیش آمد.\n\nجزئیات فنی: {e}")
+        await update.message.reply_text(f"❌ ببخشید، در پردازش درخواست شما مشکلی پیش آمد: {e}")
 
 
 if __name__ == '__main__':
@@ -226,6 +223,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED WITH LOGGING - FINAL & CORRECTED!")
+    print("🤖 BOT DEPLOYED WITH FINAL PROMPT & QUALITY CONTROL!")
     application.run_polling()
-    
+        
