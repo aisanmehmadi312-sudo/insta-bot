@@ -94,13 +94,11 @@ async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
-    await query.answer() # برای متوقف کردن انیمیشن لودینگ روی دکمه
+    await query.answer()
     
-    # ذخیره متن دکمه، نه callback_data
     button_text = next(btn.text for row in query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == query.data)
     context.user_data['goal'] = button_text
     
-    # ویرایش پیام قبلی برای نشان دادن انتخاب
     await query.edit_message_text(text=f"✅ هدف شما: {button_text}")
 
     await context.bot.send_message(
@@ -161,7 +159,6 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     log_event(update.effective_user.id, 'profile_cancel')
     context.user_data.clear()
-    # اگر کاربر وسط کار با دکمه‌ها لغو کرد، باید پیام را ویرایش کنیم
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(text="عملیات ساخت پروفایل لغو شد.")
@@ -172,7 +169,6 @@ async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # ---------------------------------------------
 
 # --- دستورات اصلی ربات ---
-# (توابع start و generate_content بدون تغییر باقی می‌مانند)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_event(update.effective_user.id, 'start_command')
     await update.message.reply_text("سلام! 👋\nبرای ساخت/ویرایش پروفایل، دستور /profile رو بزن.\nبعد از اون، هر موضوعی بفرستی، بر اساس پروفایلت برات سناریو ریلز می‌سازم.")
@@ -197,35 +193,60 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
 
     try:
+        # --- پرامپت نهایی (کاملاً فارسی و با کنترل کیفیت) ---
         prompt = f"""
-        **Your Primary Task:**
-        You are a viral content strategist. Create a professional Instagram Reel blueprint based on the user's profile.
+        **شخصیت تو:**
+        تو یک استراتژیست محتوای وایرال و کارگردان خلاق برای اینستاگرام هستی.
 
-        **User's Profile:**
-        - **Business:** {user_profile['business']}
-        - **Content Goal:** {user_profile['goal']}
-        - **Audience:** {user_profile['audience']}
-        - **Tone:** {user_profile['tone']}
-        - **Today's Topic:** "{user_text}"
+        **ماموریت اصلی تو:**
+        نوشتن یک نقشه ساخت کامل و حرفه‌ای برای ریلز، بر اساس پروفایل کاربر.
 
-        ---
-        **CRITICAL RULES:**
-        1.  **Relevance First:** If the topic is completely irrelevant, reply ONLY with this exact Persian sentence:
-            `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
-        2.  **Markdown Quality Control:** Ensure your Markdown syntax is 100% perfect.
+        **پروفایل کاربر:**
+        - **کسب‌وکار:** {user_profile['business']}
+        - **هدف محتوا:** {user_profile['goal']}
+        - **مخاطب:** {user_profile['audience']}
+        - **لحن:** {user_profile['tone']}
+        - **موضوع امروز:** "{user_text}"
 
         ---
-        **Blueprint Structure (if relevant):**
-        (The blueprint's CTA should reflect the 'Content Goal'. A 'sales' goal needs a stronger CTA than a 'community' goal.)
-        ### 🎬 Viral Reel Blueprint: [Engaging Title]
-        **1. ATTENTION (0-3s): Hook** (*Visual:* ..., *On-Screen Text:* ...)
-        **2. INTEREST (4-10s): Problem/Value** (*Visual:* ..., *Narration:* ...)
-        **3. DESIRE (11-20s): Solution** (*Visual:* ..., *Narration:* ...)
-        **4. ACTION (21-30s): CTA** (*Visual:* ..., *On-Screen Text:* ...)
+        **قوانین حیاتی (باید رعایت کنی):**
+
+        **۱. قانون ارتباط:**
+        با عقل سلیم بررسی کن. اگر و فقط اگر موضوع کاملاً به کسب‌وکار بی‌ربط بود (مثال: کسب‌وکار «میوه‌فروشی» و موضوع «تعمیر موتور ماشین»)، باید کار را متوقف کرده و **فقط** این جمله دقیق فارسی را پاسخ دهی:
+        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+
+        **۲. قانون زبان:**
+        کل پاسخ تو، از عنوان گرفته تا توضیحات، باید **۱۰۰٪ به زبان فارسی** باشد.
+
+        **۳. قانون کنترل کیفیت Markdown:**
+        قبل از ارائه پاسخ نهایی، باید خروجی خودت را بازبینی کنی تا مطمئن شوی تمام کاراکترهای قالب‌بندی (`*` برای بولد کردن) به درستی و به صورت جفت استفاده شده‌اند. پاسخ نهایی باید از نظر فنی بی‌نقص باشد.
+
         ---
-        ### ✍️ Caption & Hashtags
-        **Caption:** ...
-        **Hashtags:** ...
+        **ساختار نقشه ساخت (اگر موضوع مرتبط بود):**
+        (فراخوان به اقدام یا CTA در انتهای سناریو باید با «هدف محتوا» کاربر همخوانی داشته باشد. مثلا هدف «فروش» به CTA قوی‌تری نیاز دارد)
+
+        ### 🎬 نقشه ساخت ریلز: [یک عنوان جذاب برای ویدیو]
+
+        **۱. جلب توجه (۰-۳ ثانیه): قلاب**
+        - **تصویر:** (اولین شات را با جزئیات توصیف کن)
+        - **متن روی صفحه:** (یک جمله قدرتمند و کنجکاوکننده بنویس)
+
+        **۲. ایجاد علاقه (۴-۱۰ ثانیه): مشکل یا ارزش اصلی**
+        - **تصویر:** (سکانس‌هایی که ایده اصلی را می‌سازند توصیف کن)
+        - **گفتار/نریشن:** (مشکل را توضیح بده یا اطلاعات کلیدی را ارائه کن)
+
+        **۳. ایجاد اشتیاق (۱۱-۲۰ ثانیه): راه حل**
+        - **تصویر:** (لحظه طلایی یا «آها!» را نشان بده)
+        - **گفتار/نریشن:** (توضیح بده که این راه حل چگونه زندگی را بهتر می‌کند)
+
+        **۴. اقدام (۲۱-۳۰ ثانیه): فراخوان به اقدام (CTA)**
+        - **تصویر:** (شات نهایی و رضایت‌بخش را توصیف کن)
+        - **متن روی صفحه:** (یک CTA واضح و مستقیم، مثل: «برای بعد ذخیره کن!»)
+        
+        ---
+        ### ✍️ کپشن و هشتگ‌ها
+        - **کپشن:** (یک کپشن جذاب بنویس که سوالی هم برای درگیر کردن مخاطب داشته باشد)
+        - **هشتگ‌ها:** (بین ۵ تا ۷ هشتگ مرتبط ارائه بده)
         """
         
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
@@ -278,6 +299,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED WITH INLINE KEYBOARD PROFILE!")
+    print("🤖 BOT DEPLOYED WITH FULLY PERSIAN & INLINE KEYBOARD PROFILE!")
     application.run_polling()
-                         
+    
