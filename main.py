@@ -109,58 +109,50 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_text = update.message.text
-    wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی نقشه ساخت...")
+    wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
 
     try:
-        # --- پرامپت نهایی (ترکیب نگهبان + کارگردان) ---
+        # --- پرامپت نهایی (ساده، هوشمند و متعادل) ---
         prompt = f"""
-        **Your Persona:** You are a two-part AI: a strict Gatekeeper and a world-class viral video Strategist. You will perform your tasks in order.
+        **Your Persona:** You are a smart and practical social media strategist. Your goal is to help the user by creating high-quality, relevant content.
 
-        **Input Data:**
+        **User's Data:**
         - Business Profile: {user_profile['business']}
         - Target Audience: {user_profile['audience']}
         - Brand Tone: {user_profile['tone']}
         - Today's Topic: "{user_text}"
 
         ---
-        **Step 1: The Gatekeeper - Relevance Check**
-        First, analyze the "Today's Topic." Is it directly and logically relevant to the "Business Profile"?
-        - **Relevant Example:** Business is "selling bananas", topic is "healthy snacks". -> This is RELEVANT.
-        - **Irrelevant Example:** Business is "selling bananas", topic is "polar bears". -> This is IRRELEVANT.
+        **Your Thought Process and Task:**
 
-        If the topic is IRRELEVANT, your entire output MUST BE **ONLY** this single line:
-        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
-        **Do not proceed to Step 2.**
+        1.  **Analyze the Topic:** First, look at the user's "Today's Topic" and "Business Profile". Use common sense to determine the level of relevance.
 
-        ---
-        **Step 2: The Strategist - Viral Blueprint (ONLY if topic is RELEVANT)**
-        If the topic passed the Gatekeeper check, then generate a complete blueprint for a 15-30 second reel using the AIDA model. The output must be in Markdown and strictly follow this structure:
+        2.  **Make a Decision:**
+            *   **Case 1: The topic is completely irrelevant.** (e.g., Business is "selling bananas", topic is "polar bears"). If so, your **only** output should be this polite rejection:
+                `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
 
-        ### 🎬 Viral Reel Blueprint: [Engaging Title for the Reel]
+            *   **Case 2: The topic is relevant.** (e.g., Business is "selling bananas", topic is "banana" or "healthy snacks"). If it's relevant, your main task is to create a professional reel blueprint. Use the AIDA model (Attention, Interest, Desire, Action) to structure your idea. Make it engaging and useful for the target audience.
 
-        **1. ATTENTION (Seconds 0-3): The Scroll-Stopping Hook**
-        *   **Visual:** [Describe the very first, specific shot.]
-        *   **On-Screen Text:** [A powerful, curiosity-driven sentence.]
-        *   **Psychology:** [Briefly explain WHY this hook works.]
+        3.  **Produce the Final Output:** Based on your decision, provide **either** the rejection message **or** the full reel blueprint. Do not mix them.
 
-        **2. INTEREST (Seconds 4-10): The Core Value / Problem**
-        *   **Visual:** [Describe the sequence of shots.]
-        *   **Spoken Line / Narration:** [Explain the core problem or deliver the key info.]
-
-        **3. DESIRE (Seconds 11-20): The Solution & Transformation**
-        *   **Visual:** [Show the "aha!" moment or the ideal outcome.]
-        *   **Spoken Line / Narration:** [Explain how this solution makes life better.]
-
-        **4. ACTION (Seconds 21-30): The Call to Action (CTA)**
-        *   **Visual:** [Final satisfying shot.]
-        *   **CTA On-Screen Text:** [A clear, direct call to action (e.g., "Save for later!")]
-        *   **Psychology:** [Explain the type of CTA and its benefit.]
-
+        **Reel Blueprint Structure (if relevant):**
+        ### 🎬 Viral Reel Blueprint: [Engaging Title]
+        **1. ATTENTION (0-3s): Hook**
+        *   **Visual:** [Describe the first shot]
+        *   **On-Screen Text:** [A powerful sentence]
+        **2. INTEREST (4-10s): Problem/Value**
+        *   **Visual:** [Describe the shots]
+        *   **Narration:** [Explain the core idea]
+        **3. DESIRE (11-20s): Solution**
+        *   **Visual:** [Show the "aha!" moment]
+        *   **Narration:** [Explain the benefit]
+        **4. ACTION (21-30s): CTA**
+        *   **Visual:** [Final satisfying shot]
+        *   **On-Screen Text:** [e.g., "Save for later!"]
         ---
         ### ✍️ Caption & Hashtags
-
-        **Caption:** [An engaging caption that asks a question.]
-        **Hashtags:** [5-7 relevant hashtags.]
+        **Caption:** [Write an engaging caption]
+        **Hashtags:** [Provide 5-7 hashtags]
         """
         
         response = client.chat.completions.create(
@@ -175,10 +167,8 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_rejection = ai_reply.startswith(rejection_message_start)
 
         if is_rejection:
-            # اگر پیام رد کردن بود، آن را همانطور که هست ارسال کن
             await update.message.reply_text(f"**توجه:**\n{ai_reply}", parse_mode='Markdown')
         else:
-            # در غیر این صورت، این یک سناریوی کامل است
             try:
                 await update.message.reply_text(ai_reply, parse_mode='Markdown')
             except BadRequest as e:
@@ -207,14 +197,5 @@ if __name__ == '__main__':
         states={
             BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
             AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
-            TONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tone_and_save)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel_profile)],
-    )
+            TONE: [MessageHandler(filters.TEXT & ~filter
     
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
-    
-    print("🤖 BOT DEPLOYED WITH HYBRID GATEKEEPER-STRATEGIST PROMPT!")
-    application.run_polling()
