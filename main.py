@@ -112,59 +112,56 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ دارم موضوع رو با پروفایلت چک می‌کنم...")
 
     try:
-        # --- دستور (Prompt) جدید با قانون سخت‌گیرانه ---
+        # --- دستور (Prompt) متعادل شده ---
         prompt = f"""
-        **شخصیت شما (Persona):**
-        تو یک استراتژیست برند بسیار دقیق و سخت‌گیر برای اینستاگرام هستی. مهم‌ترین وظیفه تو، حفظ یکپارچگی و ثبات برند (Brand Consistency) کاربر است.
+        **Your Persona:** You are an intelligent content strategist. Your goal is to create relevant, viral content ideas that align with the user's brand.
 
-        **اطلاعات کسب‌وکار کاربر (User Profile):**
-        - موضوع اصلی پیج: {user_profile['business']}
-        - مخاطب هدف: {user_profile['audience']}
-        - لحن برند: {user_profile['tone']}
-
-        **موضوع درخواستی کاربر:** "{user_text}"
+        **User's Profile:**
+        - Business Topic: {user_profile['business']}
+        
+        **User's Requested Topic:** "{user_text}"
 
         ---
-        **وظیفه (Task):**
-        
-        **قانون شماره ۱ (مهم‌ترین قانون): بررسی دقیق ارتباط موضوع**
-        1.  پروفایل کاربر و موضوع درخواستی را با دقت مقایسه کن.
-        2.  **اگر** موضوع درخواستی کاربر **هیچ ارتباط مستقیم و واضحی** با "موضوع اصلی پیج" او نداشت، **هرگز و تحت هیچ شرایطی سناریو نساز.**
-            *   **مثال برای رد کردن:** اگر پروفایل "فروش لوازم آرایشی" است و کاربر "تعمیر خودرو" را درخواست دهد، این کاملا بی‌ربط است.
-            *   **مثال دیگر برای رد کردن:** اگر پروفایل "فروش موز" است و کاربر "خرس قطبی" را درخواست دهد، این هم کاملا بی‌ربط است.
-        3.  در این حالت (یعنی در صورت کاملاً بی‌ربط بودن)، **فقط و فقط** این پاسخ کوتاه را بده:
-            "موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید."
+        **Your Task: Analyze and Decide**
 
-        **قانون شماره ۲: ساخت سناریو (فقط در صورت تایید قانون ۱)**
-        *   **فقط و فقط اگر** موضوع کاملاً مرتبط بود، آنگاه وظیفه اصلی خودت یعنی نوشتن سناریوی کامل ریلز را انجام بده.
-        
-        **ساختار خروجی برای سناریو:**
-        (ساختار کامل سناریو، کپشن و هشتگ که قبلاً توافق کردیم)
-        ### 🎬 سناریوی ریلز وایرال
-        ...
+        1.  **Analyze Relevance:** Look at the user's "Business Topic" and their "Requested Topic".
+            *   **Is the request relevant?** A topic is relevant if it's the core product, a related product, or a concept directly linked to the business.
+            *   **Example of RELEVANT:** If Business Topic is "Selling bananas", then "banana", "banana bread", or "healthy snacks" are all RELEVANT.
+            *   **Example of IRRELEVANT:** If Business Topic is "Selling bananas", then "polar bears" or "car repair" are IRRELEVANT.
+
+        2.  **Choose Your Output (Only one of these two options):**
+
+            *   **If IRRELEVANT:** Your response MUST BE ONLY this single line of text:
+                `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+
+            *   **If RELEVANT:** Then (and only then) write a full, creative reel scenario based on the user's complete profile (including audience: '{user_profile['audience']}' and tone: '{user_profile['tone']}'). Start the scenario with `### 🎬 سناریوی ریلز وایرال`.
+
+        Now, execute the task based on this balanced logic.
         """
         
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o",  # Using a more capable model for better instruction following
             messages=[{"role": "user", "content": prompt}]
         )
-        ai_reply = response.choices[0].message.content
+        ai_reply = response.choices[0].message.content.strip()
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         
-        final_message = ai_reply
-        if len(ai_reply) < 200 and "### 🎬" not in ai_reply:
-            final_message = f"**توجه:**\n{ai_reply}"
+        rejection_message_start = f"موضوع «{user_text}»"
+        is_rejection = ai_reply.startswith(rejection_message_start)
 
-        try:
-            await update.message.reply_text(final_message, parse_mode='Markdown')
-        except BadRequest as e:
-            if "Can't parse entities" in str(e):
-                logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
-                fallback_text = "⚠️ فرمت پاسخ تولید شده توسط هوش مصنوعی مشکل داشت. متن خام پاسخ:\n\n" + ai_reply
-                await update.message.reply_text(fallback_text)
-            else:
-                raise e
+        if is_rejection:
+            await update.message.reply_text(f"**توجه:**\n{ai_reply}", parse_mode='Markdown')
+        else:
+            try:
+                await update.message.reply_text(ai_reply, parse_mode='Markdown')
+            except BadRequest as e:
+                if "Can't parse entities" in str(e):
+                    logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
+                    fallback_text = "⚠️ هوش مصنوعی یک سناریو با فرمت اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
+                    await update.message.reply_text(fallback_text)
+                else:
+                    raise e
 
     except Exception as e:
         logger.error(f"Error in generate_content: {e}")
@@ -193,6 +190,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED SUCCESSFULLY WITH STRICT PROMPT!")
+    print("🤖 BOT DEPLOYED WITH BALANCED PROMPT!")
     application.run_polling()
-                        
+        
