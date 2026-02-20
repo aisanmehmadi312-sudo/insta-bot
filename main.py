@@ -2,9 +2,11 @@ import os
 import logging
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
 from openai import OpenAI
 from supabase import create_client, Client
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
     filters, ConversationHandler
@@ -56,17 +58,17 @@ if SUPABASE_URL and SUPABASE_KEY:
 BUSINESS, AUDIENCE, TONE = range(3)
 
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("خب، بیا پروفایل کسب‌وکارت رو بسازیم.\n\n**موضوع اصلی پیج شما چیست؟**")
+    await update.message.reply_text("خب، بیا پروفایل کسب‌وکارت رو بسازیم.\n\n**موضوع اصلی پیج شما چیست؟**", parse_mode='Markdown')
     return BUSINESS
 
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['business'] = update.message.text
-    await update.message.reply_text("عالی! حالا بگو **مخاطب هدفت چه کسانی هستند؟**")
+    await update.message.reply_text("عالی! حالا بگو **مخاطب هدفت چه کسانی هستند؟**", parse_mode='Markdown')
     return AUDIENCE
 
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['audience'] = update.message.text
-    await update.message.reply_text("و در آخر، **لحن برندت چیست؟** (صمیمی، رسمی، شوخ)")
+    await update.message.reply_text("و در آخر، **لحن برندت چیست؟** (صمیمی، رسمی، شوخ)", parse_mode='Markdown')
     return TONE
 
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -144,17 +146,31 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         
+        # --- بخش جدید و هوشمند برای ارسال پیام ---
+        final_message = ai_reply
         if len(ai_reply) < 200 and "### 🎬" not in ai_reply:
-            await update.message.reply_text(f"🤔 **توجه:**\n{ai_reply}")
-        else:
-            await update.message.reply_text(ai_reply, parse_mode='Markdown')
+            final_message = f"🤔 **توجه:**\n{ai_reply}"
+
+        try:
+            # تلاش برای ارسال با فرمت Markdown
+            await update.message.reply_text(final_message, parse_mode='Markdown')
+        except BadRequest as e:
+            # اگر خطای فرمت‌بندی رخ داد
+            if "Can't parse entities" in str(e):
+                logger.warning(f"Markdown parse error. Sending as plain text. Error: {e}")
+                # پیام را به صورت متن ساده و با یک هشدار ارسال می‌کنیم
+                fallback_text = "⚠️ متاسفانه هوش مصنوعی یک پاسخ با فرمت اشتباه تولید کرد. در ادامه، متن خام پاسخ را می‌بینی:\n\n" + ai_reply
+                await update.message.reply_text(fallback_text)
+            else:
+                # اگر خطای دیگری بود، آن را به بخش مدیریت خطای اصلی می‌سپاریم
+                raise e
 
     except Exception as e:
         logger.error(f"Error in generate_content: {e}")
         try:
             await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         except Exception as delete_error:
-            logger.error(f"Could not delete wait message (it might be already gone): {delete_error}")
+            logger.error(f"Could not delete wait message: {delete_error}")
         
         await update.message.reply_text(f"❌ ببخشید، در پردازش درخواست شما مشکلی پیش آمد.\n\nجزئیات فنی: {e}")
 
@@ -176,6 +192,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT STARTED WITH FINAL FIXES...")
+    print("🤖 BOT DEPLOYED SUCCESSFULLY WITH ALL FIXES!")
     application.run_polling()
-
+        
