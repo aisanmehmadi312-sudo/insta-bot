@@ -110,7 +110,6 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ یک لحظه صبر کن، دارم بهترین ایده رو پیدا می‌کنم...")
 
     try:
-        # --- دستور (Prompt) اصلاح شده و انعطاف‌پذیرتر ---
         prompt = f"""
         **شخصیت شما (Persona):**
         تو یک همکار خلاق و متخصص تولید محتوای وایرال برای اینستاگرام هستی. وظیفه تو این است که ایده‌هایی جذاب برای کاربر بسازی که با هویت کلی برند او همخوانی داشته باشد.
@@ -132,7 +131,7 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         3.  **در غیر این صورت (یعنی اگر مرتبط بود یا توانستی آن را مرتبط کنی)،** وظیفه اصلی خود را انجام بده: یک سناریوی کامل برای ریلز اینستاگرام بنویس.
 
         **ساختار خروجی برای سناریو:**
-        (اینجا همان ساختار کاملی که قبلاً توافق کرده بودیم برای سناریو، کپشن، و هشتگ‌ها را قرار بده)
+        (ساختار کامل سناریو، کپشن و هشتگ که قبلاً توافق کردیم)
         ### 🎬 سناریوی ریلز وایرال
         ...
         """
@@ -145,19 +144,24 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         
-        # این بخش تشخیص هوشمند عالی است و آن را نگه می‌داریم
         if len(ai_reply) < 200 and "### 🎬" not in ai_reply:
             await update.message.reply_text(f"🤔 **توجه:**\n{ai_reply}")
         else:
             await update.message.reply_text(ai_reply, parse_mode='Markdown')
 
     except Exception as e:
-        logger.error(f"OpenAI/Generate Error: {e}")
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id, 
-            message_id=wait_msg.message_id, 
-            text=f"❌ خطای OpenAI: {e}"
-        )
+        logger.error(f"Error in generate_content: {e}")
+        # --- بخش اصلاح شده برای جلوگیری از خطای Message to edit not found ---
+        try:
+            # سعی می‌کنیم پیام "لطفا صبر کنید" را حذف کنیم
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
+        except Exception as delete_error:
+            # اگر از قبل حذف شده بود، مشکلی نیست و فقط لاگ می‌گیریم
+            logger.error(f"Could not delete wait message (it might be already gone): {delete_error}")
+        
+        # یک پیام خطای جدید ارسال می‌کنیم
+        await update.message.reply_text(f"❌ ببخشید، در پردازش درخواست شما مشکلی پیش آمد.\n\nجزئیات فنی: {e}")
+
 
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -176,6 +180,5 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT STARTED WITH FLEXIBLE PROMPT...")
-    application.run_polling()
-               
+    print("🤖 BOT START
+    
