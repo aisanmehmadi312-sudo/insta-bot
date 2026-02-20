@@ -5,24 +5,24 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from openai import OpenAI
 from supabase import create_client, Client
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
     filters, ConversationHandler
 )
 
-# Setup logging
+# تنظیمات لاگ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Environment Variables ---
+# --- دریافت توکن‌ها ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# --- Keep-Alive Server ---
+# --- سرور الکی برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -37,7 +37,7 @@ threading.Thread(target=run_fake_server, daemon=True).start()
 
 # ---------------------------------------------
 
-# --- Service Connections ---
+# --- اتصال به سرویس‌ها ---
 client = None
 if OPENAI_API_KEY:
     try:
@@ -53,63 +53,123 @@ if SUPABASE_URL and SUPABASE_KEY:
         logger.error(f"Supabase Config Error: {e}")
 
 # ---------------------------------------------
-# --- Analytics Logging Function ---
+# --- تابع ثبت آمار ---
 def log_event(user_id: str, event_type: str, content: str = ""):
-    if not supabase:
-        return
+    if not supabase: return
     try:
-        data_to_insert = {
-            'user_id': str(user_id),
-            'event_type': event_type,
-            'content': content
-        }
+        data_to_insert = {'user_id': str(user_id), 'event_type': event_type, 'content': content}
         supabase.table('logs').insert(data_to_insert).execute()
     except Exception as e:
         logger.error(f"Supabase log event error: {e}")
 
 # ---------------------------------------------
 
-# --- Profile Conversation ---
-BUSINESS, AUDIENCE, TONE = range(3)
+# --- مراحل جدید مکالمه پروفایل با دکمه ---
+BUSINESS, GOAL, AUDIENCE, TONE = range(4)
 
-async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# دکمه‌های مربوط به مراحل
+goal_keyboard = [
+    ["افزایش فروش محصول/خدمات", "افزایش آگاهی از برند"],
+    ["آموزش و ارائه ارزش به مخاطب", "سرگرمی و ساخت کامیونیتی"],
+]
+goal_markup = ReplyKeyboardMarkup(goal_keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+tone_keyboard = [
+    ["صمیمی و دوستانه", "رسمی و معتبر"],
+    ["انرژی‌بخش و انگیزشی", "شوخ و طنز"],
+    ["آموزشی و تخصصی"],
+]
+tone_markup = ReplyKeyboardMarkup(tone_keyboard, one_time_keyboard=True, resize_keyboard=True)
+
+
+async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """شروع فرآیند ساخت پروفایل."""
     log_event(update.effective_user.id, 'profile_start')
-    await update.message.reply_text("خب، بیا پروفایل کسب‌وکارت رو بسازیم.\n\n**موضوع اصلی پیج شما چیست؟**", parse_mode='Markdown')
+    await update.message.reply_text(
+        "خب، بیا پروفایل کسب‌وکارت رو بسازیم.\n\n"
+        "**۱/۴ - موضوع اصلی پیج شما چیست؟**\n"
+        "(مثال: فروش آنلاین قهوه، آموزش یوگا، کلینیک روانشناسی)",
+        parse_mode='Markdown'
+    )
     return BUSINESS
 
-async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """دریافت موضوع کسب‌وکار و پرسیدن هدف."""
     context.user_data['business'] = update.message.text
-    await update.message.reply_text("عالی! حالا بگو **مخاطب هدفت چه کسانی هستند؟**", parse_mode='Markdown')
+    await update.message.reply_text(
+        "عالی!\n\n"
+        "**۲/۴ - هدف اصلی شما از تولید محتوا چیست؟**\n"
+        "(انتخاب این گزینه به من کمک می‌کند تا سناریوهایی بنویسم که شما را به هدفتان برساند)",
+        reply_markup=goal_markup,
+        parse_mode='Markdown'
+    )
+    return GOAL
+
+async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """دریافت هدف و پرسیدن مخاطب."""
+    context.user_data['goal'] = update.message.text
+    await update.message.reply_text(
+        "بسیار خب.\n\n"
+        "**۳/۴ - مخاطب هدف شما چه کسانی هستند؟**\n"
+        "(هرچه دقیق‌تر توصیف کنی، من محتوای بهتری برایشان می‌سازم. مثال: دانشجویان، مادران جوان، مدیران کسب‌وکار)",
+        reply_markup=ReplyKeyboardRemove(), # حذف دکمه‌های قبلی
+        parse_mode='Markdown'
+    )
     return AUDIENCE
 
-async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """دریافت مخاطب و پرسیدن لحن."""
     context.user_data['audience'] = update.message.text
-    await update.message.reply_text("و در آخر، **لحن برندت چیست؟** (صمیمی، رسمی، شوخ)", parse_mode='Markdown')
+    await update.message.reply_text(
+        "و در آخر...\n\n"
+        "**۴/۴ - لحن برند شما کدام است؟**",
+        reply_markup=tone_markup,
+        parse_mode='Markdown'
+    )
     return TONE
 
-async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """دریافت لحن و ذخیره نهایی پروفایل."""
     context.user_data['tone'] = update.message.text
     user_id = str(update.effective_user.id)
     
-    profile_data = {'user_id': user_id, 'business': context.user_data['business'], 'audience': context.user_data['audience'], 'tone': context.user_data['tone']}
+    # ساخت دیکشنری کامل پروفایل
+    profile_data = {
+        'user_id': user_id,
+        'business': context.user_data['business'],
+        'goal': context.user_data['goal'],
+        'audience': context.user_data['audience'],
+        'tone': context.user_data['tone']
+    }
     
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         log_event(user_id, 'profile_saved')
-        await update.message.reply_text("✅ پروفایل شما با موفقیت ذخیره/آپدیت شد!")
+        await update.message.reply_text(
+            "✅ پروفایل شما با موفقیت ذخیره/آپدیت شد!\n"
+            "از الان به بعد، هر موضوعی بفرستی، بر اساس این پروفایل جدید برات سناریو می‌سازم.",
+            reply_markup=ReplyKeyboardRemove()
+        )
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
-        await update.message.reply_text(f"❌ خطا در ذخیره پروفایل: {e}")
+        await update.message.reply_text(f"❌ خطا در ذخیره پروفایل: {e}", reply_markup=ReplyKeyboardRemove())
+        
+    context.user_data.clear()
     return ConversationHandler.END
 
-async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """لغو فرآیند ساخت پروفایل."""
     log_event(update.effective_user.id, 'profile_cancel')
-    await update.message.reply_text("عملیات ساخت پروفایل لغو شد.")
+    context.user_data.clear()
+    await update.message.reply_text(
+        "عملیات ساخت پروفایل لغو شد.",
+        reply_markup=ReplyKeyboardRemove()
+    )
     return ConversationHandler.END
 
 # ---------------------------------------------
 
-# --- Main Bot Logic ---
+# --- دستورات اصلی ربات ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_event(update.effective_user.id, 'start_command')
     await update.message.reply_text("سلام! 👋\nبرای ساخت/ویرایش پروفایل، دستور /profile رو بزن.\nبعد از اون، هر موضوعی بفرستی، بر اساس پروفایلت برات سناریو ریلز می‌سازم.")
@@ -118,11 +178,16 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     
     try:
-        response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
+        # حالا باید ستون goal را هم از دیتابیس بخوانیم
+        response = supabase.table('profiles').select("*, goal").eq('user_id', user_id).execute()
         if not response.data:
             await update.message.reply_text("❌ اول باید پروفایلت رو بسازی! لطفاً دستور /profile رو بزن.")
             return
         user_profile = response.data[0]
+        # اطمینان از وجود داشتن کلید goal
+        if 'goal' not in user_profile:
+             user_profile['goal'] = 'نامشخص' # مقدار پیش‌فرض برای پروفایل‌های قدیمی
+
     except Exception as e:
         await update.message.reply_text(f"❌ خطا در خواندن پروفایل از دیتابیس: {e}")
         return
@@ -131,44 +196,47 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
 
     try:
-        # --- Final Prompt with a Self-Correction Layer ---
+        # --- پرامپت نهایی با فیلد جدید 'goal' ---
         prompt = f"""
         **Your Primary Task:**
-        As a viral content strategist, create a professional Instagram Reel blueprint for the user's topic, based on their profile.
+        You are a viral content strategist. Your job is to create a professional Instagram Reel blueprint for the user's topic, based on their profile.
 
         **User's Profile:**
         - **Business:** {user_profile['business']}
+        - **Content Goal:** {user_profile['goal']}
         - **Audience:** {user_profile['audience']}
         - **Tone:** {user_profile['tone']}
         - **Today's Topic:** "{user_text}"
 
         ---
-        **Execution Plan:**
+        **CRITICAL RULES:**
+        1.  **Relevance First:** Use common sense. If and ONLY IF the topic is completely irrelevant to the business, reply ONLY with this exact Persian sentence:
+            `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+        2.  **Markdown Quality Control:** You MUST double-check your response to ensure your Markdown syntax is 100% perfect.
 
-        **Step 1: Relevance Check.**
-        Use common sense. If the topic is completely irrelevant (e.g., business is "fruit stand", topic is "car engines"), you MUST stop and reply ONLY with this exact Persian sentence:
-        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
-
-        **Step 2: Blueprint Creation (if relevant).**
-        Create the script using the AIDA model. Structure it like this:
-        ### 🎬 Viral Reel Blueprint: [Title]
-        **1. ATTENTION (0-3s): Hook** (*Visual:* ..., *On-Screen Text:* ...)
-        **2. INTEREST (4-10s): Problem/Value** (*Visual:* ..., *Narration:* ...)
-        **3. DESIRE (11-20s): Solution** (*Visual:* ..., *Narration:* ...)
-        **4. ACTION (21-30s): CTA** (*Visual:* ..., *On-Screen Text:* ...)
+        ---
+        **Blueprint Structure (if relevant):**
+        (The blueprint structure should be created with the user's 'Content Goal' in mind. For example, a 'sales' goal needs a stronger CTA.)
+        ### 🎬 Viral Reel Blueprint: [Engaging Title]
+        **1. ATTENTION (0-3s): Hook**
+        *   **Visual:** [Describe the first shot]
+        *   **On-Screen Text:** [A powerful sentence]
+        **2. INTEREST (4-10s): Problem/Value**
+        *   **Visual:** [Describe the shots]
+        *   **Narration:** [Explain the core idea]
+        **3. DESIRE (11-20s): Solution**
+        *   **Visual:** [Show the "aha!" moment]
+        *   **Narration:** [Explain the benefit]
+        **4. ACTION (21-30s): CTA**
+        *   **Visual:** [Final satisfying shot]
+        *   **On-Screen Text:** [e.g., "Save for later!"]
         ---
         ### ✍️ Caption & Hashtags
-        **Caption:** ...
-        **Hashtags:** ...
-
-        **Step 3: Final Quality Check (CRITICAL).**
-        Before you output your final response, you MUST review it for valid Markdown syntax. Ensure every asterisk `*` and every underscore `_` is part of a correctly matched pair. Your final output MUST be 100% syntactically perfect Markdown. This is a non-negotiable technical requirement.
+        **Caption:** [Write an engaging caption]
+        **Hashtags:** [Provide 5-7 hashtags]
         """
         
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}]
-        )
+        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         ai_reply = response.choices[0].message.content.strip()
         
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
@@ -179,21 +247,16 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             await update.message.reply_text(message_to_send, parse_mode='Markdown')
-            # Log success only if the message is sent without errors
-            if not is_rejection:
-                log_event(user_id, 'content_generated_success', user_text)
+            if not is_rejection: log_event(user_id, 'content_generated_success', user_text)
         except BadRequest as e:
             if "Can't parse entities" in str(e):
                 log_event(user_id, 'markdown_error', user_text)
-                logger.error(f"Markdown parse error despite quality check. Error: {e}")
-                fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. این یک باگ است و به زودی رفع می‌شود. متن خام پاسخ:\n\n" + ai_reply
+                logger.error(f"Markdown parse error: {e}")
+                fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
                 await update.message.reply_text(fallback_text)
-            else:
-                # For other bad requests, re-raise the error
-                raise e
+            else: raise e
         
-        if is_rejection:
-            log_event(user_id, 'topic_rejected', user_text)
+        if is_rejection: log_event(user_id, 'topic_rejected', user_text)
 
     except Exception as e:
         log_event(user_id, 'general_error', str(e))
@@ -209,12 +272,14 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
+    # تعریف ConversationHandler جدید
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('profile', profile_start)],
         states={
             BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
+            GOAL: [MessageHandler(filters.Regex(f'^({"|".join(sum(goal_keyboard, []))})$'), get_goal)],
             AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
-            TONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tone_and_save)],
+            TONE: [MessageHandler(filters.Regex(f'^({"|".join(sum(tone_keyboard, []))})$'), get_tone_and_save)],
         },
         fallbacks=[CommandHandler('cancel', cancel_profile)],
     )
@@ -223,6 +288,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED WITH FINAL PROMPT & QUALITY CONTROL!")
+    print("🤖 BOT DEPLOYED WITH BUTTON-BASED PROFILE CREATION!")
     application.run_polling()
         
