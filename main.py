@@ -64,17 +64,12 @@ def log_event(user_id: str, event_type: str, content: str = ""):
 
 # ---------------------------------------------
 
-# --- مراحل جدید مکالمه پروفایل با دکمه‌های Inline ---
+# --- مراحل مکالمه پروفایل ---
 BUSINESS, GOAL, AUDIENCE, TONE = range(4)
 
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     log_event(update.effective_user.id, 'profile_start')
-    await update.message.reply_text(
-        "خب، بیا پروفایل کسب‌وکارت رو بسازیم.\n\n"
-        "**۱/۴ - موضوع اصلی پیج شما چیست؟**\n"
-        "(مثال: فروش آنلاین قهوه، آموزش یوگا، کلینیک روانشناسی)",
-        parse_mode='Markdown'
-    )
+    await update.message.reply_text("۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)")
     return BUSINESS
 
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -84,59 +79,36 @@ async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         [InlineKeyboardButton("آموزش به مخاطب", callback_data='goal_education'), InlineKeyboardButton("سرگرمی و کامیونیتی", callback_data='goal_community')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "عالی!\n\n"
-        "**۲/۴ - هدف اصلی شما از تولید محتوا چیست؟**",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    await update.message.reply_text("۲/۴ - هدف اصلی شما از تولید محتوا چیست؟", reply_markup=reply_markup)
     return GOAL
 
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    
     button_text = next(btn.text for row in query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == query.data)
     context.user_data['goal'] = button_text
-    
-    await query.edit_message_text(text=f"✅ هدف شما: {button_text}")
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="بسیار خب.\n\n"
-             "**۳/۴ - مخاطب هدف شما چه کسانی هستند؟**\n"
-             "(مثال: دانشجویان، مادران جوان، مدیران کسب‌وکار)",
-        parse_mode='Markdown'
-    )
+    await query.edit_message_text(text=f"✅ هدف: {button_text}")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف شما چه کسانی هستند؟\n(مثال: دانشجویان، مادران جوان)")
     return AUDIENCE
 
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['audience'] = update.message.text
     keyboard = [
         [InlineKeyboardButton("صمیمی و دوستانه", callback_data='tone_friendly'), InlineKeyboardButton("رسمی و معتبر", callback_data='tone_formal')],
-        [InlineKeyboardButton("انرژی‌بخش و انگیزشی", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
+        [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
         [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "و در آخر...\n\n"
-        "**۴/۴ - لحن برند شما کدام است؟**",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
+    await update.message.reply_text("۴/۴ - لحن برند شما کدام است؟", reply_markup=reply_markup)
     return TONE
 
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    
     button_text = next(btn.text for row in query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == query.data)
     context.user_data['tone'] = button_text
-    
-    await query.edit_message_text(text=f"✅ لحن شما: {button_text}")
-    
+    await query.edit_message_text(text=f"✅ لحن: {button_text}")
     user_id = str(update.effective_user.id)
-    
     profile_data = {
         'user_id': user_id,
         'business': context.user_data.get('business'),
@@ -144,15 +116,13 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         'audience': context.user_data.get('audience'),
         'tone': context.user_data.get('tone')
     }
-    
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         log_event(user_id, 'profile_saved_inline')
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما با موفقیت ذخیره/آپدیت شد!")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!")
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ خطا در ذخیره پروفایل: {e}")
-        
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -161,17 +131,16 @@ async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data.clear()
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text="عملیات ساخت پروفایل لغو شد.")
+        await update.callback_query.edit_message_text(text="عملیات لغو شد.")
     else:
-        await update.message.reply_text("عملیات ساخت پروفایل لغو شد.")
+        await update.message.reply_text("عملیات لغو شد.")
     return ConversationHandler.END
 
 # ---------------------------------------------
 
-# --- دستورات اصلی ربات ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_event(update.effective_user.id, 'start_command')
-    await update.message.reply_text("سلام! 👋\nبرای ساخت/ویرایش پروفایل، دستور /profile رو بزن.\nبعد از اون، هر موضوعی بفرستی، بر اساس پروفایلت برات سناریو ریلز می‌سازم.")
+    await update.message.reply_text("سلام! 👋 برای ساخت پروفایل /profile را بزنید.")
 
 async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -179,67 +148,58 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
-            await update.message.reply_text("❌ اول باید پروفایلت رو بسازی! لطفاً دستور /profile رو بزن.")
+            await update.message.reply_text("❌ اول باید پروفایلت رو با دستور /profile بسازی.")
             return
         user_profile = response.data[0]
-        if 'goal' not in user_profile or user_profile['goal'] is None:
-             user_profile['goal'] = 'نامشخص'
-
+        user_profile['goal'] = user_profile.get('goal', 'نامشخص')
     except Exception as e:
-        await update.message.reply_text(f"❌ خطا در خواندن پروفایل از دیتابیس: {e}")
+        await update.message.reply_text(f"❌ خطا در خواندن پروفایل: {e}")
         return
 
     user_text = update.message.text
-    wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و طراحی سناریو...")
+    wait_msg = await update.message.reply_text("⏳ در حال طراحی سناریو...")
 
     try:
-        # --- پرامپت نهایی (هویت و زبان کاملاً ایرانی) ---
         prompt = f"""
-        **شخصیت تو:**
-        تو یک متخصص تولید محتوای خلاق و کاربلد ایرانی هستی. با فضای اینستاگرام ایران، سلیقه مخاطب ایرانی و ترندهای فارسی کاملاً آشنایی.
-
-        **ماموریت اصلی تو:**
-        بر اساس پروفایل کاربر، یک نقشه ساخت کامل و حرفه‌ای برای یک ریلز اینستاگرامی بنویسی.
+        **شخصیت:** تو یک متخصص تولید محتوای خلاق ایرانی برای اینستاگرام هستی.
+        **ماموریت:** نوشتن یک نقشه ساخت کامل برای ریلز، فقط و فقط به زبان فارسی.
 
         **اطلاعات کاربر:**
-        - **کسب‌وکار:** {user_profile['business']}
-        - **هدف اصلی محتوا:** {user_profile['goal']}
-        - **مخاطب:** {user_profile['audience']}
-        - **لحن:** {user_profile['tone']}
-        - **موضوع درخواستی:** "{user_text}"
+        - کسب‌وکار: {user_profile['business']}
+        - هدف: {user_profile['goal']}
+        - مخاطب: {user_profile['audience']}
+        - لحن: {user_profile['tone']}
+        - موضوع: "{user_text}"
 
         ---
-        **نقشه راه اجرای ماموریت:**
+        **مراحل اجرا:**
 
-        **۱. مرحله تحلیل (فیلتر اولیه):**
-        اول موضوع درخواستی را با کسب‌وکار کاربر مقایسه کن. اگر موضوع هیچ ربط منطقی نداشت (مثلا کسب‌وکار «آموزش موسیقی» است و موضوع «قیمت دلار»)، کار را متوقف کن و فقط این جمله را بنویس:
-        `موضوع «{user_text}» با پروفایل کسب‌وکار شما ارتباطی ندارد. لطفاً یک موضوع مرتبط ارائه دهید.`
+        **۱. فیلتر:** اگر موضوع کاملا بی‌ربط بود (مثال: کسب‌وکار «یوگا» و موضوع «قیمت خودرو»)، فقط این جمله را بنویس: `موضوع «{user_text}» با پروفایل شما ارتباطی ندارد.`
 
-        **۲. مرحله ایده‌پردازی (در صورت مرتبط بودن):**
-        اگر موضوع مرتبط بود، یک سناریوی کامل بر اساس ساختار زیر بنویس. حواست باشد که «فراخوان به اقدام» در انتهای سناریو، باید با «هدف اصلی محتوا» کاربر همخوانی داشته باشد.
+        **۲. ایده‌پردازی:** در غیر این صورت، یک سناریوی کامل با ساختار زیر بنویس.
 
         **ساختار نقشه ساخت:**
-        ### 🎬 نقشه ساخت ریلز: [یک عنوان جذاب و فارسی برای ویدیو]
+        ### 🎬 نقشه ساخت ریلز: [عنوان جذاب و فارسی]
 
-        **۱. قلاب (۰-۳ ثانیه):**
-        - **تصویر:** (اولین صحنه را دقیق توصیف کن)
-        - **متن روی صفحه:** (یک جمله کوتاه و کنجکاوکننده بنویس)
+        ۱. قلاب (۰-۳ ثانیه):
+        - تصویر: (شرح صحنه اول)
+        - متن روی صفحه: (جمله کنجکاوکننده)
 
-        **۲. بدنه اصلی (۴-۲۰ ثانیه):**
-        - **تصویر:** (سکانس‌های اصلی را برای ارائه ارزش یا نمایش راه حل توصیف کن)
-        - **گفتار یا نریشن:** (متن صحبت یا توضیحات را بنویس)
+        ۲. بدنه اصلی (۴-۲۰ ثانیه):
+        - تصویر: (شرح سکانس‌های اصلی)
+        - گفتار: (متن صحبت‌ها)
 
-        **۳. فراخوان به اقدام (۲۱-۳۰ ثانیه):**
-        - **تصویر:** (صحنه پایانی و تاثیرگذار را توصیف کن)
-        - **متن روی صفحه:** (یک درخواست واضح از مخاطب، مثل: «این پست رو ذخیره کن!»)
+        ۳. فراخوان به اقدام (۲۱-۳۰ ثانیه):
+        - تصویر: (شرح صحنه پایانی)
+        - متن روی صفحه: (درخواست واضح از مخاطب)
         
         ---
         ### ✍️ کپشن و هشتگ‌ها
-        - **کپشن:** (یک کپشن جذاب و درگیرکننده به فارسی بنویس)
-        - **هشتگ‌ها:** (۵ تا ۷ هشتگ مناسب و مرتبط به فارسی بنویس)
+        - کپشن: (کپشن جذاب و فارسی)
+        - هشتگ‌ها: (۵ تا ۷ هشتگ فارسی)
         ---
         **قانون نهایی و بسیار مهم:**
-        کل پاسخ تو، از عنوان تا آخرین هشتگ، باید **فقط و فقط به زبان فارسی روان و امروزی** باشد. از به کار بردن هرگونه کلمه یا عبارت انگلیسی در پاسخ نهایی اکیدا خودداری کن. همچنین، مطمئن شو که فرمت نوشتاری Markdown پاسخ تو ۱۰۰٪ صحیح است.
+        هرگز و تحت هیچ شرایطی از کاراکتر `*` برای بولد کردن متن استفاده نکن. کل پاسخ باید متن ساده و بدون هیچ‌گونه قالب‌بندی بولد باشد. این مهم‌ترین قانون است.
         """
         
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
@@ -248,23 +208,27 @@ async def generate_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         
         is_rejection = ai_reply.startswith(f"موضوع «{user_text}»")
-        message_to_send = f"**توجه:**\n{ai_reply}" if is_rejection else ai_reply
+        message_to_send = f"توجه:\n{ai_reply}" if is_rejection else ai_reply
+
+        # --- محافظ نهایی کد ---
+        # اگر به هر دلیلی هوش مصنوعی دوباره از * استفاده کرد، آن را حذف می‌کنیم
+        if message_to_send.count('*') > 0:
+            logger.warning("AI violated the 'no-asterisk' rule. Sanitizing output.")
+            message_to_send = message_to_send.replace('*', '')
 
         try:
-            await update.message.reply_text(message_to_send, parse_mode='Markdown')
-            if not is_rejection: log_event(user_id, 'content_generated_success', user_text)
-        except BadRequest as e:
-            if "Can't parse entities" in str(e):
-                log_event(user_id, 'markdown_error', user_text)
-                logger.error(f"Markdown parse error: {e}")
-                fallback_text = "⚠️ هوش مصنوعی یک پاسخ با فرمت نوشتاری اشتباه تولید کرد. متن خام پاسخ:\n\n" + ai_reply
-                await update.message.reply_text(fallback_text)
-            else: raise e
+            # حالا با parse_mode غیرفعال یا حذف شده ارسال می‌کنیم چون قالب‌بندی نداریم
+            await update.message.reply_text(message_to_send)
+            if not is_rejection: log_event(user_id, 'content_generated_final', user_text)
+        except BadRequest as e: # این بخش حالا یک لایه امنیتی اضافه است
+            log_event(user_id, 'final_fallback_error', user_text)
+            logger.error(f"A very unexpected error occurred: {e}")
+            await update.message.reply_text("یک خطای غیرمنتظره در ارسال پیام رخ داد. متن خام پاسخ:\n\n" + ai_reply)
         
-        if is_rejection: log_event(user_id, 'topic_rejected', user_text)
+        if is_rejection: log_event(user_id, 'topic_rejected_final', user_text)
 
     except Exception as e:
-        log_event(user_id, 'general_error', str(e))
+        log_event(user_id, 'general_error_final', str(e))
         logger.error(f"Error in generate_content: {e}")
         try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=wait_msg.message_id)
         except Exception: pass
@@ -282,16 +246,12 @@ if __name__ == '__main__':
             AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
             TONE: [CallbackQueryHandler(get_tone_and_save, pattern='^tone_')],
         },
-        fallbacks=[
-            CommandHandler('cancel', cancel_profile),
-            CallbackQueryHandler(cancel_profile, pattern='^cancel$')
-        ],
+        fallbacks=[CommandHandler('cancel', cancel_profile), CallbackQueryHandler(cancel_profile, pattern='^cancel$')],
     )
     
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler('start', start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), generate_content))
     
-    print("🤖 BOT DEPLOYED WITH FULLY PERSIAN IDENTITY!")
+    print("🤖 BOT DEPLOYED WITH CODE-BASED SANITIZER!")
     application.run_polling()
-    
