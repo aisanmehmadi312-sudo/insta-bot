@@ -25,7 +25,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# محدودیت استفاده روزانه برای هر کاربر (می‌توانی این عدد را تغییر دهی)
+# محدودیت استفاده روزانه برای هر کاربر
 DAILY_LIMIT = 5
 
 # --- سرور وب برای بیدار نگه داشتن Render ---
@@ -58,8 +58,9 @@ if SUPABASE_URL and SUPABASE_KEY:
 
 # --- توابع کمکی ---
 async def check_services(update: Update) -> bool:
+    message_target = update.callback_query.message if update.callback_query else update.message
     if not supabase or not client:
-        await update.message.reply_text("❌ سیستم در حال حاضر با مشکل ارتباطی روبروست. لطفاً بعداً تلاش کنید.")
+        await message_target.reply_text("❌ سیستم در حال حاضر با مشکل ارتباطی روبروست. لطفاً بعداً تلاش کنید.")
         return False
     return True
 
@@ -71,52 +72,82 @@ def log_event(user_id: str, event_type: str, content: str = ""):
     except Exception as e:
         logger.error(f"Supabase log event error: {e}")
 
-# --- تابع جدید: بررسی محدودیت روزانه ---
-async def check_daily_limit(update: Update, user_id: str) -> bool:
-    """تعداد درخواست‌های امروز کاربر را چک می‌کند."""
-    if not supabase: return False
+async def get_today_usage(user_id: str) -> int:
+    """تعداد درخواست‌های امروز کاربر را برمی‌گرداند."""
+    if not supabase: return 0
     try:
-        # تاریخ امروز (به وقت UTC که با دیتابیس هماهنگ است)
         today = datetime.now(timezone.utc).date().isoformat()
-        
-        # شمارش رویدادهای تولید محتوا برای این کاربر در امروز
-        # از event_type هایی که به API ریکوئست می‌زنند استفاده می‌کنیم
         response = supabase.table('logs').select("id", count="exact")\
             .eq('user_id', user_id)\
             .in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success'])\
             .gte('created_at', f"{today}T00:00:00Z")\
             .execute()
-            
-        usage_count = response.count if response.count else 0
-        
-        if usage_count >= DAILY_LIMIT:
-            await update.message.reply_text(
-                f"⚠️ **محدودیت استفاده روزانه**\n\n"
-                f"شما امروز به سقف مجاز خود ({DAILY_LIMIT} درخواست) رسیده‌اید.\n"
-                "برای حفظ کیفیت خدمات، لطفاً فردا دوباره مراجعه کنید. متشکریم! 🙏",
-                parse_mode='Markdown'
-            )
-            return False # یعنی اجازه عبور ندارد
-        return True # یعنی اجازه عبور دارد
-        
+        return response.count if response.count else 0
     except Exception as e:
-        logger.error(f"Error checking daily limit: {e}")
-        return True # در صورت خطای دیتابیس، سخت‌گیری نمی‌کنیم تا ربات از کار نیفتد
+        logger.error(f"Error checking usage: {e}")
+        return 0
+
+async def check_daily_limit(update: Update, user_id: str) -> bool:
+    """اگر سقف پر شده باشد، پیام می‌دهد و False برمی‌گرداند."""
+    usage_count = await get_today_usage(user_id)
+    if usage_count >= DAILY_LIMIT:
+        message_target = update.callback_query.message if update.callback_query else update.message
+        await message_target.reply_text(
+            f"⚠️ **محدودیت استفاده روزانه**\n\n"
+            f"شما امروز به سقف مجاز خود ({DAILY_LIMIT} درخواست) رسیده‌اید.\n"
+            "برای حفظ کیفیت خدمات، لطفاً فردا دوباره مراجعه کنید. متشکریم! 🙏",
+            parse_mode='Markdown'
+        )
+        return False
+    return True
 
 # ---------------------------------------------
+# --- منوی اصلی (Main Menu) ---
+def get_main_menu_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🎬 ایده‌پرداز و سناریونویس", callback_data='menu_scenario')],
+        [InlineKeyboardButton("🏷 هشتگ‌ساز هوشمند", callback_data='menu_hashtags'), InlineKeyboardButton("🧠 مربی ایده", callback_data='menu_coach')],
+        [InlineKeyboardButton("👤 تنظیمات پروفایل", callback_data='menu_profile'), InlineKeyboardButton("💳 وضعیت اعتبار", callback_data='menu_quota')]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-# --- دستور /start ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    log_event(update.effective_user.id, 'start_command')
-    welcome_message = (
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    log_event(str(user_id), 'opened_main_menu')
+    
+    welcome_text = (
         "سلام! 👋 به دستیار هوشمند تولید محتوای اینستاگرام خوش آمدید.\n\n"
-        "🛠 **پروفایل:** ابتدا با /profile پروفایل کسب‌وکارتان را بسازید.\n\n"
-        "✍️ **سناریونویسی:** هر زمان موضوعی داشتید، فقط آن را تایپ کنید تا برایتان ایده بسازم.\n\n"
-        "🏷 **هشتگ‌ساز:** برای دریافت هشتگ، از /hashtags استفاده کنید.\n\n"
-        "🧠 **مربی ایده:** اگر خودت ایده‌ای نوشتی و میخوای بررسیش کنم، روی /coach کلیک کن.\n\n"
-        f"*(سهمیه روزانه شما: {DAILY_LIMIT} درخواست)*"
+        "من اینجا هستم تا صفر تا صد تولید محتوا را برایتان راحت کنم. از منوی زیر یکی از ابزارها را انتخاب کنید:"
     )
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard())
+    else:
+        await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard())
+
+# هندلر دکمه‌های منوی اصلی که Conversation نیستند
+async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+    await query.answer()
+
+    if query.data == 'menu_scenario':
+        text = ("🎬 **سناریونویس هوشمند:**\n\n"
+                "برای استفاده از این بخش نیازی به زدن دکمه نیست! فقط کافیست **هر زمان** که خواستید، "
+                "موضوع ریلز خود را به صورت متن عادی همینجا تایپ کنید تا برایتان ۳ ایده ناب طراحی کنم.\n"
+                "(مثال: فواید خوردن قهوه در صبح)")
+        await query.message.reply_text(text, parse_mode='Markdown')
+        
+    elif query.data == 'menu_quota':
+        usage = await get_today_usage(user_id)
+        remaining = max(0, DAILY_LIMIT - usage)
+        text = (f"💳 **وضعیت اعتبار روزانه شما:**\n\n"
+                f"🔹 کل سهمیه روزانه: {DAILY_LIMIT}\n"
+                f"🔹 استفاده شده امروز: {usage}\n"
+                f"✅ **اعتبار باقیمانده: {remaining}**\n\n"
+                "(سهمیه شما هر شب ساعت ۱۲ به وقت جهانی شارژ می‌شود)")
+        await query.message.reply_text(text, parse_mode='Markdown')
 
 # ---------------------------------------------
 # --- 1. مراحل مکالمه پروفایل ---
@@ -124,8 +155,15 @@ P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
 
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    log_event(update.effective_user.id, 'profile_start')
-    await update.message.reply_text("۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)")
+    log_event(str(update.effective_user.id), 'profile_start')
+    
+    msg_text = "۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)"
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(msg_text)
+    else:
+        await update.message.reply_text(msg_text)
     return P_BUSINESS
 
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -179,7 +217,11 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         log_event(user_id, 'profile_saved')
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!\nحالا می‌توانید موضوع ریلز را تایپ کنید.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="✅ پروفایل شما ذخیره شد!\nحالا می‌توانید از طریق منوی اصلی از امکانات ربات استفاده کنید.",
+            reply_markup=get_main_menu_keyboard()
+        )
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ خطا در ذخیره دیتابیس.")
@@ -187,7 +229,7 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return ConversationHandler.END
 
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    log_event(update.effective_user.id, 'action_canceled')
+    log_event(str(update.effective_user.id), 'action_canceled')
     context.user_data.clear()
     if update.callback_query:
         await update.callback_query.answer()
@@ -198,32 +240,35 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 # ---------------------------------------------
-# --- 2. قابلیت هشتگ‌های هوشمند (/hashtags) ---
+# --- 2. قابلیت هشتگ‌های هوشمند ---
 H_TOPIC = 5
 
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    log_event(update.effective_user.id, 'hashtag_start')
-    await update.message.reply_text(
+    log_event(str(update.effective_user.id), 'hashtag_start')
+    
+    msg_text = (
         "🏷 **به ابزار هشتگ‌ساز هوشمند خوش آمدید!**\n\n"
-        "لطفاً موضوع پست یا ریلز خود را بنویسید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:",
-        parse_mode='Markdown'
+        "لطفاً موضوع پست یا ریلز خود را تایپ کنید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:"
     )
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(msg_text, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(msg_text, parse_mode='Markdown')
     return H_TOPIC
 
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
-    
-    # ----> بررسی محدودیت روزانه قبل از اجرای درخواست <----
-    if not await check_daily_limit(update, user_id):
-        return ConversationHandler.END
+    if not await check_daily_limit(update, user_id): return ConversationHandler.END
         
     topic = update.message.text
     
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
-            await update.message.reply_text("❌ اول باید پروفایلت رو با دستور /profile بسازی.")
+            await update.message.reply_text("❌ اول باید پروفایلت رو با زدن روی 'تنظیمات پروفایل' بسازی.")
             return ConversationHandler.END
         user_profile = response.data[0]
     except Exception as e:
@@ -259,39 +304,44 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'hashtags_generated_success', topic)
+            
     except Exception as e:
         log_event(user_id, 'hashtag_error', str(e))
+        logger.error(f"Hashtag generation error: {e}")
         await wait_msg.edit_text("❌ مشکلی در تولید هشتگ‌ها پیش آمد.")
 
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- 3. قابلیت مربی ایده‌پردازی (/coach) ---
+# --- 3. قابلیت مربی ایده‌پردازی ---
 C_TEXT = 6
 
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    log_event(update.effective_user.id, 'coach_start')
-    await update.message.reply_text(
+    log_event(str(update.effective_user.id), 'coach_start')
+    
+    msg_text = (
         "🧠 **به بخش مربی ایده خوش آمدید!**\n\n"
         "آیا خودتان ایده‌ای برای ریلز، کپشن یا متنی آماده کرده‌اید؟\n"
-        "آن را اینجا بفرستید تا من آن را بررسی کنم و راهکارهایی برای وایرال شدنش پیشنهاد دهم.",
-        parse_mode='Markdown'
+        "آن را اینجا بفرستید تا من آن را بررسی کنم و راهکارهایی برای وایرال شدنش پیشنهاد دهم."
     )
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(msg_text, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(msg_text, parse_mode='Markdown')
     return C_TEXT
 
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
-    
-    # ----> بررسی محدودیت روزانه قبل از اجرای درخواست <----
-    if not await check_daily_limit(update, user_id):
-        return ConversationHandler.END
+    if not await check_daily_limit(update, user_id): return ConversationHandler.END
 
     user_idea_text = update.message.text
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
-            await update.message.reply_text("❌ اول باید پروفایلت رو با دستور /profile بسازی تا بدونم کسب‌وکارت چیه.")
+            await update.message.reply_text("❌ اول باید پروفایلت رو با دکمه 'تنظیمات پروفایل' بسازی.")
             return ConversationHandler.END
         user_profile = response.data[0]
     except Exception as e:
@@ -328,8 +378,10 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'coach_analyzed_success')
+            
     except Exception as e:
         log_event(user_id, 'coach_error', str(e))
+        logger.error(f"Coach generation error: {e}")
         await wait_msg.edit_text("❌ مشکلی در آنالیز ایده پیش آمد.")
 
     return ConversationHandler.END
@@ -341,17 +393,14 @@ IDEAS, EXPAND = range(7, 9)
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     user_id = str(update.effective_user.id)
-    
-    # ----> بررسی محدودیت روزانه قبل از اجرای درخواست <----
-    if not await check_daily_limit(update, user_id):
-        return ConversationHandler.END
+    if not await check_daily_limit(update, user_id): return ConversationHandler.END
         
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
-            await update.message.reply_text("❌ اول باید پروفایلت رو با دستور /profile بسازی.")
+            await update.message.reply_text("❌ لطفاً ابتدا از منوی اصلی، پروفایل خود را بسازید.")
             return ConversationHandler.END
         
         context.user_data['profile'] = response.data[0]
@@ -412,7 +461,7 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message_text += "کدام یک را برایت به سناریوی کامل تبدیل کنم؟"
         
         await wait_msg.edit_text(message_text, reply_markup=reply_markup)
-        log_event(str(update.effective_user.id), 'ideas_generated', topic) # این لاگ برای شمارش استفاده می‌شود
+        log_event(str(update.effective_user.id), 'ideas_generated', topic)
         return EXPAND
 
     except Exception as e:
@@ -465,10 +514,9 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         - متن روی صفحه: (درخواست واضح از مخاطب)
         
         ---
-        ### ✍️ کپشن و هشتگ‌ها
+        ### ✍️ کپشن
         - کپشن: (کپشن جذاب فارسی)
-        - هشتگ‌ها: (۵ تا ۷ هشتگ فارسی)
-        ---
+        
         **قانون نهایی:** هرگز از کاراکتر `*` برای بولد کردن استفاده نکن.
         """
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_expansion}])
@@ -488,6 +536,7 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             
     except Exception as e:
         log_event(str(update.effective_user.id), 'expansion_error', str(e))
+        logger.error(f"Error in expand_idea: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ در نوشتن سناریوی کامل مشکلی پیش آمد.")
 
     context.user_data.clear()
@@ -498,8 +547,19 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
+    # دستورات منوی اصلی
+    application.add_handler(CommandHandler('start', show_main_menu))
+    application.add_handler(CommandHandler('menu', show_main_menu))
+    
+    # هندلرهای ساده برای دکمه‌های منو که Conversation نیستند
+    application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota)$'))
+    
+    # هندلر ساخت پروفایل
     profile_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('profile', profile_start)],
+        entry_points=[
+            CommandHandler('profile', profile_start),
+            CallbackQueryHandler(profile_start, pattern='^menu_profile$') # پشتیبانی از دکمه منو
+        ],
         states={
             P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
             P_GOAL: [CallbackQueryHandler(get_goal, pattern='^goal_')],
@@ -509,22 +569,31 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
 
+    # هندلر هشتگ ساز
     hashtag_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('hashtags', hashtag_start)],
+        entry_points=[
+            CommandHandler('hashtags', hashtag_start),
+            CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$') # پشتیبانی از دکمه منو
+        ],
         states={
             H_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, hashtag_generate)],
         },
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
+    # هندلر مربی ایده
     coach_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('coach', coach_start)],
+        entry_points=[
+            CommandHandler('coach', coach_start),
+            CallbackQueryHandler(coach_start, pattern='^menu_coach$') # پشتیبانی از دکمه منو
+        ],
         states={
             C_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, coach_analyze)],
         },
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
+    # هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد)
     content_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
         states={
@@ -533,11 +602,10 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
     
-    application.add_handler(CommandHandler('start', start))
     application.add_handler(profile_conv_handler)
     application.add_handler(hashtag_conv_handler)
     application.add_handler(coach_conv_handler)
     application.add_handler(content_conv_handler)
     
-    print("🤖 BOT DEPLOYED WITH DAILY RATE LIMITING (5 REQUESTS/DAY)!")
+    print("🤖 BOT DEPLOYED WITH FULL GLASS MENU & NAVIGATION!")
     application.run_polling()
