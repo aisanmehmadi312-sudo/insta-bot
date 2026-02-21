@@ -185,23 +185,17 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     elif query.data == 'admin_recent_users':
         try:
-            # دریافت ۵ پروفایل آخری که ساخته شده‌اند بر اساس زمان ایجاد
             response = supabase.table('profiles').select("*").order('created_at', desc=True).limit(5).execute()
             users = response.data
             if not users:
                 await query.message.reply_text("📭 هنوز هیچ کاربری ثبت نشده است.")
                 return
-            
             msg = "👥 **لیست ۵ کاربر اخیر:**\n\n"
             for idx, u in enumerate(users):
                 goal_text = u.get('goal', 'نامشخص')
-                msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n"
-                msg += f"💼 **کسب‌وکار:** {u['business']}\n"
-                msg += f"🎯 **هدف:** {goal_text}\n"
-                msg += "──────────────\n"
+                msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n💼 **کسب‌وکار:** {u['business']}\n🎯 **هدف:** {goal_text}\n──────────────\n"
             await query.message.reply_text(msg, parse_mode='Markdown')
         except Exception as e:
-            logger.error(f"Recent users error: {e}")
             await query.message.reply_text("❌ خطا در دریافت لیست کاربران.")
 
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -359,8 +353,9 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     except: await update.message.reply_text("❌ خطا در آنالیز یا یافتن پروفایل.")
     return ConversationHandler.END
 
-# --- سناریو ساز ---
+# --- سناریو ساز (با فیلتر دژبان قدرتمند) ---
 IDEAS, EXPAND = range(7, 9)
+
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_services(update) or not await check_daily_limit(update, uid): return ConversationHandler.END
@@ -379,19 +374,59 @@ async def check_profile_before_content(update: Update, context: ContextTypes.DEF
         
 async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     prof, topic = context.user_data['profile'], context.user_data['topic']
-    wait_msg = await update.message.reply_text("⏳ در حال ایده‌پردازی...")
+    wait_msg = await update.message.reply_text("⏳ در حال بررسی موضوع و ایده‌پردازی...")
     try:
-        prompt = f"برای موضوع ({topic}) و کسب‌وکار ({prof['business']})، سه ایده ریلز با ساختار JSON (کلید ideas، لیست شامل title و hook) بده."
+        # فیلتر هوشمندانه (Gatekeeper) در قالب درخواست JSON
+        prompt = f"""
+        **شخصیت:** تو یک مدیر استراتژی محتوای بسیار دقیق و سخت‌گیر ایرانی هستی.
+        
+        **مرحله اول (فیلتر ارتباط):**
+        بررسی کن آیا موضوع درخواستی کاربر، ارتباط منطقی و تجاریِ مستقیمی با کسب‌وکار او دارد یا خیر.
+        - کسب‌وکار کاربر: {prof['business']}
+        - موضوع درخواستی: "{topic}"
+
+        **مرحله دوم (ساختار خروجی JSON):**
+        فقط و فقط یک آبجکت JSON خروجی بده.
+        
+        اگر موضوع بی‌ربط بود (is_relevant: false):
+        {{
+            "is_relevant": false,
+            "rejection_message": "موضوع «{topic}» با کسب‌وکار شما ({prof['business']}) ارتباطی ندارد.",
+            "ideas": []
+        }}
+
+        اگر مرتبط بود (is_relevant: true):
+        {{
+            "is_relevant": true,
+            "rejection_message": "",
+            "ideas": [
+                {{"title": "ایده ۱...", "hook": "قلاب ۱..."}},
+                {{"title": "ایده ۲...", "hook": "قلاب ۲..."}},
+                {{"title": "ایده ۳...", "hook": "قلاب ۳..."}}
+            ]
+        }}
+        """
         res = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
-        ideas = json.loads(res.choices[0].message.content).get("ideas", [])
+        response_data = json.loads(res.choices[0].message.content)
+        
+        # اگر دژبان تشخیص داد بی‌ربط است
+        if not response_data.get("is_relevant", True):
+            await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'موضوع نامرتبط است.')}")
+            log_event(str(update.effective_user.id), 'topic_rejected_gatekeeper', topic)
+            return ConversationHandler.END
+
+        # اگر مرتبط بود
+        ideas = response_data.get("ideas", [])
+        if not ideas: raise ValueError("لیست ایده‌ها در JSON خالی است.")
+
         context.user_data['ideas'] = ideas
         kb = [[InlineKeyboardButton(f"🎬 ساخت ایده {i+1}", callback_data=f'expand_{i}')] for i in range(len(ideas))]
         msg = f"موضوع: {topic}\n\n" + "\n".join([f"{i+1}. {x['title']}\nقلاب: {x['hook']}\n" for i, x in enumerate(ideas)])
         await wait_msg.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb))
-        log_event(str(update.effective_user.id), 'ideas_generated')
+        log_event(str(update.effective_user.id), 'ideas_generated', topic)
         return EXPAND
-    except:
-        await wait_msg.edit_text("❌ خطا در ایده‌پردازی.")
+    except Exception as e:
+        await wait_msg.edit_text(f"❌ خطا در ایده‌پردازی: {e}")
         return ConversationHandler.END
 
 async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -401,10 +436,10 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     prof = context.user_data['profile']
     await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریو...")
     try:
-        prompt = f"بر اساس ایده ({idea['title']}, {idea['hook']}) و پروفایل ({prof['business']}) سناریو کامل فارسی بده. اگر کاملا نامربوط بود بگو نامرتبط. ستاره نذار."
+        prompt = f"بر اساس ایده ({idea['title']}, {idea['hook']}) و پروفایل ({prof['business']}) سناریو کامل فارسی بده. ستاره نذار."
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         await context.bot.send_message(chat_id=update.effective_chat.id, text=res)
-        log_event(str(update.effective_user.id), 'expansion_success')
+        log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
     except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در سناریو.")
     context.user_data.clear()
     return ConversationHandler.END
@@ -417,7 +452,6 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('admin', admin_start))
     application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota)$'))
     
-    # هندلر دکمه‌های ادمین آپدیت شد
     application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^(admin_stats|admin_monitor|admin_recent_users|admin_toggle_maintenance)$'))
     
     application.add_handler(ConversationHandler(
@@ -455,5 +489,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: ADMIN PANEL WITH RECENT USERS!")
+    print("🤖 BOT DEPLOYED: GATEKEEPER SECURED & COMPLETE CODE PROVIDED!")
     application.run_polling()
