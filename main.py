@@ -2,7 +2,6 @@ import os
 import logging
 import threading
 import json
-import asyncio
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -75,7 +74,6 @@ def log_event(user_id: str, event_type: str, content: str = ""):
         logger.error(f"Supabase log event error: {e}")
 
 async def get_today_usage(user_id: str = None) -> int:
-    """تعداد درخواست‌های امروز را برمی‌گرداند. اگر user_id خالی باشد، کل استفاده ربات را می‌دهد."""
     if not supabase: return 0
     try:
         today = datetime.now(timezone.utc).date().isoformat()
@@ -83,8 +81,7 @@ async def get_today_usage(user_id: str = None) -> int:
             .in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success'])\
             .gte('created_at', f"{today}T00:00:00Z")
             
-        if user_id:
-            query = query.eq('user_id', user_id)
+        if user_id: query = query.eq('user_id', user_id)
             
         response = query.execute()
         return response.count if response.count else 0
@@ -105,6 +102,41 @@ async def check_daily_limit(update: Update, user_id: str) -> bool:
         return False
     return True
 
+# --- تابع پردازش صدا (Whisper API) ---
+async def process_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """ویس کاربر را می‌گیرد و با Whisper به متن تبدیل می‌کند."""
+    wait_msg = await update.message.reply_text("🎙 در حال گوش دادن و تبدیل صدای شما به متن...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    
+    try:
+        # 1. گرفتن فایل صوتی از سرور تلگرام
+        voice_file = await context.bot.get_file(update.message.voice.file_id)
+        
+        # 2. دانلود فایل به صورت موقت
+        file_path = f"temp_voice_{update.effective_user.id}.ogg"
+        await voice_file.download_to_drive(file_path)
+        
+        # 3. ارسال به OpenAI Whisper
+        with open(file_path, "rb") as audio_file:
+            transcription = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=audio_file
+            )
+            
+        # 4. پاک کردن فایل موقت از روی سرور Render
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            
+        await wait_msg.delete()
+        return transcription.text
+        
+    except Exception as e:
+        logger.error(f"Voice processing error: {e}")
+        await wait_msg.edit_text("❌ متاسفانه در پردازش صدای شما مشکلی پیش آمد. لطفاً متن خود را تایپ کنید.")
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        return None
+
 # ---------------------------------------------
 # --- 👑 پنل مدیریت (Admin Panel) ---
 A_BROADCAST = 10
@@ -113,10 +145,7 @@ def is_admin(user_id: int) -> bool:
     return ADMIN_ID and str(user_id) == str(ADMIN_ID)
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """نقطه ورود پنل ادمین (فقط با دستور /admin)"""
-    if not is_admin(update.effective_user.id):
-        return # اگر ادمین نبود، کلاً بی‌تفاوت عبور کن
-    
+    if not is_admin(update.effective_user.id): return
     keyboard = [
         [InlineKeyboardButton("📊 آمار ربات", callback_data='admin_stats')],
         [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data='admin_broadcast_start')]
@@ -125,23 +154,17 @@ async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👑 **به پنل مدیریت خوش آمدید.**\nلطفاً یک گزینه را انتخاب کنید:", reply_markup=reply_markup, parse_mode='Markdown')
 
 async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """مدیریت دکمه‌های ساده پنل ادمین (مثل نمایش آمار)"""
     query = update.callback_query
     if not is_admin(update.effective_user.id):
         await query.answer("شما دسترسی ندارید.", show_alert=True)
         return
-        
     await query.answer()
 
     if query.data == 'admin_stats':
         try:
-            # تعداد کل پروفایل‌ها (کاربران)
             prof_resp = supabase.table('profiles').select("id", count="exact").execute()
             total_users = prof_resp.count if prof_resp.count else 0
-            
-            # تعداد کل استفاده امروز
             total_usage_today = await get_today_usage()
-            
             stats_msg = (
                 "📊 **آمار زنده ربات:**\n\n"
                 f"👥 کل کاربران ثبت‌نام شده: **{total_users}** نفر\n"
@@ -151,67 +174,40 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             await query.message.reply_text(f"❌ خطا در دریافت آمار: {e}")
 
-# --- بخش ارسال پیام همگانی (Broadcast) ---
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     if not is_admin(update.effective_user.id):
         await query.answer("شما دسترسی ندارید.", show_alert=True)
         return ConversationHandler.END
-        
     await query.answer()
-    await query.message.reply_text(
-        "📢 **ارسال پیام همگانی:**\n\n"
-        "لطفاً پیامی که می‌خواهید برای تمام کاربران ارسال شود را اینجا تایپ کنید.\n"
-        "(برای لغو از دستور /cancel استفاده کنید)"
-    )
+    await query.message.reply_text("📢 **ارسال پیام همگانی:**\nلطفاً پیام خود را تایپ کنید. (لغو: /cancel)")
     return A_BROADCAST
 
 async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id): return ConversationHandler.END
-    
     broadcast_msg = update.message.text
     wait_msg = await update.message.reply_text("⏳ در حال استخراج لیست کاربران و شروع ارسال...")
-    
     try:
-        # دریافت تمام یوزرهای یکتا از جدول profiles
         response = supabase.table('profiles').select("user_id").execute()
         users = response.data
-        
         if not users:
             await wait_msg.edit_text("❌ هیچ کاربری در دیتابیس یافت نشد.")
             return ConversationHandler.END
-            
-        success_count = 0
-        fail_count = 0
-        
+        success_count, fail_count = 0, 0
         await wait_msg.edit_text(f"🚀 در حال ارسال پیام به {len(users)} کاربر...\nلطفاً صبور باشید.")
-        
         for user in users:
             try:
                 await context.bot.send_message(chat_id=user['user_id'], text=broadcast_msg)
                 success_count += 1
-                await asyncio.sleep(0.1) # جلوگیری از اسپم شدن ربات توسط تلگرام (Flood Limit)
-            except Forbidden:
-                # کاربر ربات را بلاک کرده است
-                fail_count += 1
-            except Exception as e:
-                logger.error(f"Broadcast error for user {user['user_id']}: {e}")
-                fail_count += 1
-                
-        result_msg = (
-            "✅ **ارسال همگانی پایان یافت!**\n\n"
-            f"📬 ارسال موفق: {success_count} نفر\n"
-            f"🚫 کاربران بلاک‌کرده/ناموفق: {fail_count} نفر"
-        )
+                await asyncio.sleep(0.1)
+            except Forbidden: fail_count += 1
+            except Exception as e: fail_count += 1
+        result_msg = f"✅ **ارسال پایان یافت!**\n\n📬 موفق: {success_count}\n🚫 ناموفق/بلاک: {fail_count}"
         await update.message.reply_text(result_msg, parse_mode='Markdown')
         log_event(str(update.effective_user.id), 'admin_broadcast_sent', f"Success: {success_count}, Fail: {fail_count}")
-
     except Exception as e:
-        logger.error(f"Database error during broadcast: {e}")
         await update.message.reply_text("❌ خطایی در ارتباط با دیتابیس رخ داد.")
-
     return ConversationHandler.END
-
 
 # ---------------------------------------------
 # --- منوی اصلی (Main Menu) ---
@@ -226,17 +222,16 @@ def get_main_menu_keyboard():
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     log_event(str(user_id), 'opened_main_menu')
-    
     welcome_text = (
         "سلام! 👋 به دستیار هوشمند تولید محتوای اینستاگرام خوش آمدید.\n\n"
-        "من اینجا هستم تا صفر تا صد تولید محتوا را برایتان راحت کنم. از منوی زیر یکی از ابزارها را انتخاب کنید:"
+        "من اینجا هستم تا صفر تا صد تولید محتوا را برایتان راحت کنم. از منوی زیر یکی از ابزارها را انتخاب کنید:\n"
+        "*(نکته جدید: حالا می‌تونید به جای تایپ کردن، برام ویس 🎙 هم بفرستید!)*"
     )
-    
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard())
+        await update.callback_query.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
     else:
-        await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard())
+        await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
 
 async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -245,11 +240,9 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
 
     if query.data == 'menu_scenario':
         text = ("🎬 **سناریونویس هوشمند:**\n\n"
-                "برای استفاده از این بخش نیازی به زدن دکمه نیست! فقط کافیست **هر زمان** که خواستید، "
-                "موضوع ریلز خود را به صورت متن عادی همینجا تایپ کنید تا برایتان ۳ ایده ناب طراحی کنم.\n"
-                "(مثال: فواید خوردن قهوه در صبح)")
+                "برای استفاده از این بخش نیازی به دکمه نیست! فقط کافیست **هر زمان** که خواستید، "
+                "موضوع ریلز خود را به صورت متن یا **صدا (ویس 🎙)** بفرستید تا برایتان ۳ ایده ناب طراحی کنم.")
         await query.message.reply_text(text, parse_mode='Markdown')
-        
     elif query.data == 'menu_quota':
         usage = await get_today_usage(user_id)
         remaining = max(0, DAILY_LIMIT - usage)
@@ -267,7 +260,6 @@ P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     log_event(str(update.effective_user.id), 'profile_start')
-    
     msg_text = "۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)"
     if update.callback_query:
         await update.callback_query.answer()
@@ -323,17 +315,11 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     }
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-    
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         log_event(user_id, 'profile_saved')
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id, 
-            text="✅ پروفایل شما ذخیره شد!\nحالا می‌توانید از طریق منوی اصلی از امکانات ربات استفاده کنید.",
-            reply_markup=get_main_menu_keyboard()
-        )
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!", reply_markup=get_main_menu_keyboard())
     except Exception as e:
-        logger.error(f"Supabase upsert Error: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ خطا در ذخیره دیتابیس.")
     context.user_data.clear()
     return ConversationHandler.END
@@ -348,7 +334,6 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text("عملیات لغو شد.")
     return ConversationHandler.END
 
-
 # ---------------------------------------------
 # --- 2. قابلیت هشتگ‌های هوشمند ---
 H_TOPIC = 5
@@ -356,11 +341,7 @@ H_TOPIC = 5
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     log_event(str(update.effective_user.id), 'hashtag_start')
-    
-    msg_text = (
-        "🏷 **به ابزار هشتگ‌ساز هوشمند خوش آمدید!**\n\n"
-        "لطفاً موضوع پست یا ریلز خود را تایپ کنید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:"
-    )
+    msg_text = "🏷 **به ابزار هشتگ‌ساز هوشمند خوش آمدید!**\n\nلطفاً موضوع پست خود را (متنی یا صوتی 🎙) بفرستید:"
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(msg_text, parse_mode='Markdown')
@@ -372,7 +353,13 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user_id = str(update.effective_user.id)
     if not await check_daily_limit(update, user_id): return ConversationHandler.END
         
-    topic = update.message.text
+    # تشخیص اینکه ورودی متن است یا صدا
+    if update.message.voice:
+        topic = await process_voice_to_text(update, context)
+        if not topic: return ConversationHandler.END # اگر تبدیل صدا خطا خورد
+        await update.message.reply_text(f"🗣 **شما گفتید:** {topic}", parse_mode='Markdown')
+    else:
+        topic = update.message.text
     
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
@@ -381,7 +368,6 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return ConversationHandler.END
         user_profile = response.data[0]
     except Exception as e:
-        await update.message.reply_text("❌ خطا در خواندن اطلاعات از دیتابیس.")
         return ConversationHandler.END
 
     wait_msg = await update.message.reply_text("⏳ در حال استخراج و تحلیل بهترین هشتگ‌ها...")
@@ -391,7 +377,6 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         prompt = f"""
         **شخصیت:** تو یک استراتژیست شبکه‌های اجتماعی ایرانی هستی.
         **ماموریت:** بر اساس پروفایل کسب‌وکار و موضوع پست کاربر، سه دسته هشتگ حرفه‌ای و کاملاً فارسی تولید کن.
-        
         **اطلاعات کاربر:**
         - کسب‌وکار: {user_profile['business']}
         - مخاطب: {user_profile['audience']}
@@ -414,23 +399,18 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'hashtags_generated_success', topic)
     except Exception as e:
-        log_event(user_id, 'hashtag_error', str(e))
         await wait_msg.edit_text("❌ مشکلی در تولید هشتگ‌ها پیش آمد.")
+
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- 3. قابلیت مربی ایده‌پردازی ---
+# --- 3. قابلیت مربی ایده‌پردازی (/coach) ---
 C_TEXT = 6
 
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     log_event(str(update.effective_user.id), 'coach_start')
-    
-    msg_text = (
-        "🧠 **به بخش مربی ایده خوش آمدید!**\n\n"
-        "آیا خودتان ایده‌ای برای ریلز، کپشن یا متنی آماده کرده‌اید؟\n"
-        "آن را اینجا بفرستید تا من آن را بررسی کنم و راهکارهایی برای وایرال شدنش پیشنهاد دهم."
-    )
+    msg_text = "🧠 **به بخش مربی ایده خوش آمدید!**\n\nآیا خودتان ایده‌ای برای ریلز آماده کرده‌اید؟\nآن را اینجا بفرستید (متنی یا صوتی 🎙) تا من بررسی کنم."
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(msg_text, parse_mode='Markdown')
@@ -442,15 +422,21 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     user_id = str(update.effective_user.id)
     if not await check_daily_limit(update, user_id): return ConversationHandler.END
 
-    user_idea_text = update.message.text
+    # تشخیص اینکه ورودی متن است یا صدا
+    if update.message.voice:
+        user_idea_text = await process_voice_to_text(update, context)
+        if not user_idea_text: return ConversationHandler.END
+        await update.message.reply_text(f"🗣 **ایده شما:** {user_idea_text}", parse_mode='Markdown')
+    else:
+        user_idea_text = update.message.text
+        
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
-            await update.message.reply_text("❌ اول باید پروفایلت رو با دکمه 'تنظیمات پروفایل' بسازی.")
+            await update.message.reply_text("❌ اول باید پروفایلت رو بسازی.")
             return ConversationHandler.END
         user_profile = response.data[0]
     except Exception as e:
-        await update.message.reply_text("❌ خطا در خواندن اطلاعات از دیتابیس.")
         return ConversationHandler.END
 
     wait_msg = await update.message.reply_text("🧐 در حال آنالیز ایده شما...")
@@ -484,12 +470,12 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'coach_analyzed_success')
     except Exception as e:
-        log_event(user_id, 'coach_error', str(e))
         await wait_msg.edit_text("❌ مشکلی در آنالیز ایده پیش آمد.")
+
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- 4. مراحل مکالمه تولید محتوا (ایده‌پردازی و سناریو اصلی) ---
+# --- 4. مراحل تولید محتوا (ایده‌پردازی و سناریو اصلی) ---
 IDEAS, EXPAND = range(7, 9)
 
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -506,10 +492,18 @@ async def check_profile_before_content(update: Update, context: ContextTypes.DEF
             return ConversationHandler.END
         
         context.user_data['profile'] = response.data[0]
-        context.user_data['topic'] = update.message.text
+        
+        # تشخیص اینکه ورودی متن است یا صدا
+        if update.message.voice:
+            topic = await process_voice_to_text(update, context)
+            if not topic: return ConversationHandler.END
+            await update.message.reply_text(f"🗣 **موضوع دریافت شده:** {topic}", parse_mode='Markdown')
+            context.user_data['topic'] = topic
+        else:
+            context.user_data['topic'] = update.message.text
+            
         return await generate_ideas(update, context)
     except Exception as e:
-        await update.message.reply_text(f"❌ خطا در خواندن اطلاعات از دیتابیس.")
         logger.error(f"Database read error: {e}")
         return ConversationHandler.END
 
@@ -547,9 +541,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         response_data = json.loads(response.choices[0].message.content)
         ideas_json = response_data.get("ideas", [])
         
-        if not ideas_json or len(ideas_json) == 0:
-            raise ValueError("لیست ایده‌ها در JSON خالی است.")
-
         context.user_data['ideas'] = ideas_json
         keyboard = []
         for i, idea in enumerate(ideas_json):
@@ -567,7 +558,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return EXPAND
 
     except Exception as e:
-        log_event(str(update.effective_user.id), 'ideation_error', str(e))
         await wait_msg.edit_text(f"❌ ببخشید، در مرحله ایده‌پردازی مشکلی پیش آمد.")
         return ConversationHandler.END
 
@@ -633,12 +623,9 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             await context.bot.send_message(chat_id=update.effective_chat.id, text=message_to_send)
             if not is_rejection: log_event(str(update.effective_user.id), 'expansion_success', chosen_idea['title'])
         except BadRequest as e:
-            logger.warning(f"Error sending message: {e}")
             await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ خطا در ارسال پیام.")
             
     except Exception as e:
-        log_event(str(update.effective_user.id), 'expansion_error', str(e))
-        logger.error(f"Error in expand_idea: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ در نوشتن سناریوی کامل مشکلی پیش آمد.")
 
     context.user_data.clear()
@@ -649,25 +636,23 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
-    # --- دستورات اصلی و ادمین ---
+    # دستورات منوی اصلی و ادمین
     application.add_handler(CommandHandler('start', show_main_menu))
     application.add_handler(CommandHandler('menu', show_main_menu))
     application.add_handler(CommandHandler('admin', admin_start))
     
-    # هندلرهای ساده برای دکمه‌های منو که Conversation نیستند
+    # هندلرهای ساده منو
     application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota)$'))
     application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^admin_stats$'))
     
-    # --- هندلر ارسال پیام همگانی (ادمین) ---
+    # هندلر ارسال پیام همگانی (ادمین)
     admin_broadcast_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_broadcast_start, pattern='^admin_broadcast_start$')],
-        states={
-            A_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_send)],
-        },
+        states={A_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_send)]},
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
     
-    # --- هندلر ساخت پروفایل ---
+    # هندلر ساخت پروفایل
     profile_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('profile', profile_start),
@@ -682,33 +667,33 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
 
-    # --- هندلر هشتگ ساز ---
+    # هندلر هشتگ ساز (پشتیبانی از متن و صدا)
     hashtag_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('hashtags', hashtag_start),
             CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$')
         ],
         states={
-            H_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, hashtag_generate)],
+            H_TOPIC: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, hashtag_generate)],
         },
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
-    # --- هندلر مربی ایده ---
+    # هندلر مربی ایده (پشتیبانی از متن و صدا)
     coach_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('coach', coach_start),
             CallbackQueryHandler(coach_start, pattern='^menu_coach$')
         ],
         states={
-            C_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, coach_analyze)],
+            C_TEXT: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, coach_analyze)],
         },
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
-    # --- هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد) ---
+    # هندلر تولید سناریو (پشتیبانی از متن و صدا - باید آخرین هندلر باشد)
     content_conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
+        entry_points=[MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, check_profile_before_content)],
         states={
             EXPAND: [CallbackQueryHandler(expand_idea, pattern='^expand_')],
         },
@@ -722,5 +707,5 @@ if __name__ == '__main__':
     application.add_handler(coach_conv_handler)
     application.add_handler(content_conv_handler)
     
-    print("🤖 BOT DEPLOYED WITH ADMIN PANEL, QUOTA & GLASS MENU!")
+    print("🤖 BOT DEPLOYED WITH VOICE (WHISPER) INTEGRATION!")
     application.run_polling()
