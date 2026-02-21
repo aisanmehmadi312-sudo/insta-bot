@@ -50,9 +50,8 @@ if SUPABASE_URL and SUPABASE_KEY:
 
 # --- تابع بررسی سلامت سرویس‌ها ---
 async def check_services(update: Update) -> bool:
-    """بررسی می‌کند که آیا دیتابیس و هوش مصنوعی متصل هستند یا خیر."""
     if not supabase or not client:
-        await update.message.reply_text("❌ سیستم در حال حاضر با مشکل ارتباطی (دیتابیس یا هوش مصنوعی) روبروست. لطفاً بعداً تلاش کنید.")
+        await update.message.reply_text("❌ سیستم در حال حاضر با مشکل ارتباطی روبروست. لطفاً بعداً تلاش کنید.")
         return False
     return True
 
@@ -72,20 +71,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_event(update.effective_user.id, 'start_command')
     welcome_message = (
         "سلام! 👋 به دستیار هوشمند تولید محتوای اینستاگرام خوش آمدید.\n\n"
-        "🛠 **قدم اول:** برای اینکه بتوانم بهترین سناریوها را برای شما بنویسم، ابتدا باید پروفایل کسب‌وکار خود را بسازید. لطفاً روی دستور /profile کلیک کنید.\n\n"
-        "✍️ **قدم دوم:** بعد از ساخت پروفایل، کافیست هر موضوعی که برای ریلز در نظر دارید را در اینجا تایپ کنید تا من برای آن ایده‌پردازی کنم!"
+        "🛠 **قدم اول:** ابتدا روی دستور /profile کلیک کنید تا پروفایل کسب‌وکارتان را بسازیم.\n\n"
+        "✍️ **سناریونویسی:** هر زمان موضوعی برای ریلز داشتید، کافیست آن را اینجا تایپ کنید تا ۳ ایده برایتان تولید کنم.\n\n"
+        "🏷 **هشتگ‌ساز:** برای دریافت هشتگ‌های حرفه‌ای برای پست‌هایتان، روی /hashtags کلیک کنید."
     )
     await update.message.reply_text(welcome_message)
 
 # ---------------------------------------------
-
-# --- مراحل مکالمه پروفایل ---
+# --- 1. مراحل مکالمه پروفایل ---
 P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
 
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     log_event(update.effective_user.id, 'profile_start')
-    await update.message.reply_text("۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا، کلینیک دندانپزشکی)")
+    await update.message.reply_text("۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)")
     return P_BUSINESS
 
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -104,14 +103,14 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     button_text = next(btn.text for row in query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == query.data)
     context.user_data['goal'] = button_text
     await query.edit_message_text(text=f"✅ هدف: {button_text}")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف شما چه کسانی هستند؟\n(مثال: دانشجویان، مادران جوان، صاحبان کسب‌وکار)")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف شما چه کسانی هستند؟\n(مثال: دانشجویان، مادران جوان)")
     return P_AUDIENCE
 
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['audience'] = update.message.text
     keyboard = [
         [InlineKeyboardButton("صمیمی و دوستانه", callback_data='tone_friendly'), InlineKeyboardButton("رسمی و معتبر", callback_data='tone_formal')],
-        [InlineKeyboardButton("انرژی‌بخش و انگیزشی", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
+        [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
         [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -134,32 +133,103 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         'tone': context.user_data.get('tone')
     }
     
-    # ارسال وضعیت در حال تایپ
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         log_event(user_id, 'profile_saved')
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما با موفقیت ذخیره شد!\nحالا می‌توانید موضوع ریلز خود را تایپ کنید.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!\nحالا می‌توانید موضوع ریلز را تایپ کنید یا از /hashtags استفاده کنید.")
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ خطا در ذخیره اطلاعات در دیتابیس.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ خطا در ذخیره دیتابیس.")
     context.user_data.clear()
     return ConversationHandler.END
 
-async def cancel_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    log_event(update.effective_user.id, 'profile_cancel')
+async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    log_event(update.effective_user.id, 'action_canceled')
     context.user_data.clear()
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.edit_message_text(text="عملیات ساخت پروفایل لغو شد.")
+        await update.callback_query.edit_message_text(text="عملیات لغو شد.")
     else:
-        await update.message.reply_text("عملیات ساخت پروفایل لغو شد.")
+        await update.message.reply_text("عملیات لغو شد.")
     return ConversationHandler.END
 
+
 # ---------------------------------------------
-# --- مراحل مکالمه تولید محتوا (ایده‌پردازی و سناریو) ---
-IDEAS, EXPAND = range(4, 6)
+# --- 2. قابلیت جدید: هشتگ‌های هوشمند (/hashtags) ---
+H_TOPIC = 5
+
+async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not await check_services(update): return ConversationHandler.END
+    log_event(update.effective_user.id, 'hashtag_start')
+    await update.message.reply_text(
+        "🏷 **به ابزار هشتگ‌ساز هوشمند خوش آمدید!**\n\n"
+        "لطفاً موضوع پست یا ریلز خود را بنویسید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:",
+        parse_mode='Markdown'
+    )
+    return H_TOPIC
+
+async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = str(update.effective_user.id)
+    topic = update.message.text
+    
+    try:
+        response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
+        if not response.data:
+            await update.message.reply_text("❌ اول باید پروفایلت رو با دستور /profile بسازی.")
+            return ConversationHandler.END
+        user_profile = response.data[0]
+    except Exception as e:
+        await update.message.reply_text("❌ خطا در خواندن اطلاعات از دیتابیس.")
+        return ConversationHandler.END
+
+    wait_msg = await update.message.reply_text("⏳ در حال استخراج و تحلیل بهترین هشتگ‌ها...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
+    try:
+        prompt = f"""
+        **شخصیت:** تو یک استراتژیست شبکه‌های اجتماعی ایرانی هستی.
+        **ماموریت:** بر اساس پروفایل کسب‌وکار و موضوع پست کاربر، سه دسته هشتگ حرفه‌ای و کاملاً فارسی تولید کن.
+        
+        **اطلاعات کاربر:**
+        - کسب‌وکار: {user_profile['business']}
+        - مخاطب: {user_profile['audience']}
+        - موضوع پست: "{topic}"
+
+        **ساختار خروجی (دقیقاً همین ساختار را رعایت کن و هیچ متن اضافه‌ای ننویس):**
+        
+        🎯 **هشتگ‌های پربازدید (Broad):** (۵ هشتگ کلی و پرجستجو)
+        #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
+
+        🔬 **هشتگ‌های تخصصی (Niche):** (۵ هشتگ بسیار دقیق و مرتبط با موضوع)
+        #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
+
+        🤝 **هشتگ‌های کامیونیتی و مخاطب (Community):** (۵ هشتگ مرتبط با دغدغه مخاطبان)
+        #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
+        """
+        
+        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
+        ai_reply = response.choices[0].message.content.strip()
+        
+        try:
+            await wait_msg.edit_text(ai_reply, parse_mode='Markdown')
+            log_event(user_id, 'hashtags_generated_success', topic)
+        except BadRequest as e:
+            logger.warning(f"Markdown error in hashtags: {e}")
+            await wait_msg.edit_text("⚠️ خروجی:\n\n" + ai_reply)
+            
+    except Exception as e:
+        log_event(user_id, 'hashtag_error', str(e))
+        logger.error(f"Hashtag generation error: {e}")
+        await wait_msg.edit_text("❌ مشکلی در تولید هشتگ‌ها پیش آمد.")
+
+    return ConversationHandler.END
+
+
+# ---------------------------------------------
+# --- 3. مراحل مکالمه تولید محتوا (ایده‌پردازی و سناریو) ---
+IDEAS, EXPAND = range(6, 8)
 
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
@@ -186,7 +256,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     topic = context.user_data['topic']
     wait_msg = await update.message.reply_text("⏳ در حال ایده‌پردازی و طوفان فکری...")
     
-    # ارسال وضعیت در حال تایپ
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
     try:
@@ -216,7 +285,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             messages=[{"role": "user", "content": prompt_ideation}]
         )
         
-        # استخراج اصولی JSON بر اساس ساختار جدید
         response_data = json.loads(response.choices[0].message.content)
         ideas_json = response_data.get("ideas", [])
         
@@ -255,8 +323,6 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user_profile = context.user_data['profile']
     
     await query.edit_message_text(f"✅ انتخاب شما: «{chosen_idea['title']}»\n⏳ در حال نوشتن سناریوی کامل...")
-    
-    # ارسال وضعیت در حال تایپ
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
     try:
@@ -293,9 +359,8 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         - **متن روی صفحه:** (درخواست واضح از مخاطب)
         
         ---
-        ### ✍️ کپشن و هشتگ‌ها
+        ### ✍️ کپشن
         - **کپشن:** (کپشن جذاب فارسی)
-        - **هشتگ‌ها:** (۵ تا ۷ هشتگ فارسی)
         """
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_expansion}])
         ai_reply = response.choices[0].message.content.strip()
@@ -304,12 +369,10 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         message_to_send = f"⚠️ توجه:\n{ai_reply}" if is_rejection else ai_reply
 
         try:
-            # حالا با خیال راحت از Markdown استفاده می‌کنیم
             await context.bot.send_message(chat_id=update.effective_chat.id, text=message_to_send, parse_mode='Markdown')
             if not is_rejection: log_event(str(update.effective_user.id), 'expansion_success', chosen_idea['title'])
         except BadRequest as e:
-            # اگر خطای Markdown رخ داد، به صورت متن ساده می‌فرستیم
-            logger.warning(f"Markdown parsing failed, sending as plain text. Error: {e}")
+            logger.warning(f"Markdown parsing failed. Error: {e}")
             await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ خطا در قالب‌بندی نمایش. متن خام:\n\n" + message_to_send)
             
     except Exception as e:
@@ -325,6 +388,7 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
+    # هندلر ساخت پروفایل
     profile_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('profile', profile_start)],
         states={
@@ -333,21 +397,32 @@ if __name__ == '__main__':
             P_AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
             P_TONE: [CallbackQueryHandler(get_tone_and_save, pattern='^tone_')],
         },
-        fallbacks=[CommandHandler('cancel', cancel_profile), CallbackQueryHandler(cancel_profile, pattern='^cancel$')],
+        fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
 
+    # هندلر هشتگ ساز
+    hashtag_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('hashtags', hashtag_start)],
+        states={
+            H_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, hashtag_generate)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_action)],
+    )
+
+    # هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد)
     content_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
         states={
             EXPAND: [CallbackQueryHandler(expand_idea, pattern='^expand_')],
         },
-        fallbacks=[CommandHandler('cancel', cancel_profile), CallbackQueryHandler(cancel_profile, pattern='^cancel$')],
+        fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
     
     application.add_handler(CommandHandler('start', start))
     application.add_handler(profile_conv_handler)
+    application.add_handler(hashtag_conv_handler) # اضافه شدن هندلر هشتگ
     application.add_handler(content_conv_handler)
     
-    print("🤖 BOT DEPLOYED WITH ALL AI-SUGGESTED BEST PRACTICES!")
+    print("🤖 BOT DEPLOYED WITH SMART HASHTAGS FEATURE!")
     application.run_polling()
     
