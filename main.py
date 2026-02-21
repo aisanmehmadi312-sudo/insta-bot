@@ -2,6 +2,7 @@ import os
 import logging
 import threading
 import json
+import asyncio
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -9,7 +10,7 @@ from openai import OpenAI
 from supabase import create_client, Client
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Forbidden
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
     filters, ConversationHandler, CallbackQueryHandler
@@ -24,6 +25,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+ADMIN_ID = os.environ.get("ADMIN_ID") # آیدی ادمین
 
 # محدودیت استفاده روزانه برای هر کاربر
 DAILY_LIMIT = 5
@@ -72,23 +74,25 @@ def log_event(user_id: str, event_type: str, content: str = ""):
     except Exception as e:
         logger.error(f"Supabase log event error: {e}")
 
-async def get_today_usage(user_id: str) -> int:
-    """تعداد درخواست‌های امروز کاربر را برمی‌گرداند."""
+async def get_today_usage(user_id: str = None) -> int:
+    """تعداد درخواست‌های امروز را برمی‌گرداند. اگر user_id خالی باشد، کل استفاده ربات را می‌دهد."""
     if not supabase: return 0
     try:
         today = datetime.now(timezone.utc).date().isoformat()
-        response = supabase.table('logs').select("id", count="exact")\
-            .eq('user_id', user_id)\
+        query = supabase.table('logs').select("id", count="exact")\
             .in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success'])\
-            .gte('created_at', f"{today}T00:00:00Z")\
-            .execute()
+            .gte('created_at', f"{today}T00:00:00Z")
+            
+        if user_id:
+            query = query.eq('user_id', user_id)
+            
+        response = query.execute()
         return response.count if response.count else 0
     except Exception as e:
         logger.error(f"Error checking usage: {e}")
         return 0
 
 async def check_daily_limit(update: Update, user_id: str) -> bool:
-    """اگر سقف پر شده باشد، پیام می‌دهد و False برمی‌گرداند."""
     usage_count = await get_today_usage(user_id)
     if usage_count >= DAILY_LIMIT:
         message_target = update.callback_query.message if update.callback_query else update.message
@@ -100,6 +104,114 @@ async def check_daily_limit(update: Update, user_id: str) -> bool:
         )
         return False
     return True
+
+# ---------------------------------------------
+# --- 👑 پنل مدیریت (Admin Panel) ---
+A_BROADCAST = 10
+
+def is_admin(user_id: int) -> bool:
+    return ADMIN_ID and str(user_id) == str(ADMIN_ID)
+
+async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نقطه ورود پنل ادمین (فقط با دستور /admin)"""
+    if not is_admin(update.effective_user.id):
+        return # اگر ادمین نبود، کلاً بی‌تفاوت عبور کن
+    
+    keyboard = [
+        [InlineKeyboardButton("📊 آمار ربات", callback_data='admin_stats')],
+        [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data='admin_broadcast_start')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("👑 **به پنل مدیریت خوش آمدید.**\nلطفاً یک گزینه را انتخاب کنید:", reply_markup=reply_markup, parse_mode='Markdown')
+
+async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """مدیریت دکمه‌های ساده پنل ادمین (مثل نمایش آمار)"""
+    query = update.callback_query
+    if not is_admin(update.effective_user.id):
+        await query.answer("شما دسترسی ندارید.", show_alert=True)
+        return
+        
+    await query.answer()
+
+    if query.data == 'admin_stats':
+        try:
+            # تعداد کل پروفایل‌ها (کاربران)
+            prof_resp = supabase.table('profiles').select("id", count="exact").execute()
+            total_users = prof_resp.count if prof_resp.count else 0
+            
+            # تعداد کل استفاده امروز
+            total_usage_today = await get_today_usage()
+            
+            stats_msg = (
+                "📊 **آمار زنده ربات:**\n\n"
+                f"👥 کل کاربران ثبت‌نام شده: **{total_users}** نفر\n"
+                f"🔥 کل درخواست‌های امروز: **{total_usage_today}** بار (هزینه API)\n"
+            )
+            await query.message.reply_text(stats_msg, parse_mode='Markdown')
+        except Exception as e:
+            await query.message.reply_text(f"❌ خطا در دریافت آمار: {e}")
+
+# --- بخش ارسال پیام همگانی (Broadcast) ---
+async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    if not is_admin(update.effective_user.id):
+        await query.answer("شما دسترسی ندارید.", show_alert=True)
+        return ConversationHandler.END
+        
+    await query.answer()
+    await query.message.reply_text(
+        "📢 **ارسال پیام همگانی:**\n\n"
+        "لطفاً پیامی که می‌خواهید برای تمام کاربران ارسال شود را اینجا تایپ کنید.\n"
+        "(برای لغو از دستور /cancel استفاده کنید)"
+    )
+    return A_BROADCAST
+
+async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not is_admin(update.effective_user.id): return ConversationHandler.END
+    
+    broadcast_msg = update.message.text
+    wait_msg = await update.message.reply_text("⏳ در حال استخراج لیست کاربران و شروع ارسال...")
+    
+    try:
+        # دریافت تمام یوزرهای یکتا از جدول profiles
+        response = supabase.table('profiles').select("user_id").execute()
+        users = response.data
+        
+        if not users:
+            await wait_msg.edit_text("❌ هیچ کاربری در دیتابیس یافت نشد.")
+            return ConversationHandler.END
+            
+        success_count = 0
+        fail_count = 0
+        
+        await wait_msg.edit_text(f"🚀 در حال ارسال پیام به {len(users)} کاربر...\nلطفاً صبور باشید.")
+        
+        for user in users:
+            try:
+                await context.bot.send_message(chat_id=user['user_id'], text=broadcast_msg)
+                success_count += 1
+                await asyncio.sleep(0.1) # جلوگیری از اسپم شدن ربات توسط تلگرام (Flood Limit)
+            except Forbidden:
+                # کاربر ربات را بلاک کرده است
+                fail_count += 1
+            except Exception as e:
+                logger.error(f"Broadcast error for user {user['user_id']}: {e}")
+                fail_count += 1
+                
+        result_msg = (
+            "✅ **ارسال همگانی پایان یافت!**\n\n"
+            f"📬 ارسال موفق: {success_count} نفر\n"
+            f"🚫 کاربران بلاک‌کرده/ناموفق: {fail_count} نفر"
+        )
+        await update.message.reply_text(result_msg, parse_mode='Markdown')
+        log_event(str(update.effective_user.id), 'admin_broadcast_sent', f"Success: {success_count}, Fail: {fail_count}")
+
+    except Exception as e:
+        logger.error(f"Database error during broadcast: {e}")
+        await update.message.reply_text("❌ خطایی در ارتباط با دیتابیس رخ داد.")
+
+    return ConversationHandler.END
+
 
 # ---------------------------------------------
 # --- منوی اصلی (Main Menu) ---
@@ -126,7 +238,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard())
 
-# هندلر دکمه‌های منوی اصلی که Conversation نیستند
 async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = str(update.effective_user.id)
@@ -146,7 +257,7 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
                 f"🔹 کل سهمیه روزانه: {DAILY_LIMIT}\n"
                 f"🔹 استفاده شده امروز: {usage}\n"
                 f"✅ **اعتبار باقیمانده: {remaining}**\n\n"
-                "(سهمیه شما هر شب ساعت ۱۲ به وقت جهانی شارژ می‌شود)")
+                "(سهمیه شما هر شب ساعت ۱۲ شارژ می‌شود)")
         await query.message.reply_text(text, parse_mode='Markdown')
 
 # ---------------------------------------------
@@ -158,7 +269,6 @@ async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     log_event(str(update.effective_user.id), 'profile_start')
     
     msg_text = "۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)"
-    
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(msg_text)
@@ -251,7 +361,6 @@ async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "🏷 **به ابزار هشتگ‌ساز هوشمند خوش آمدید!**\n\n"
         "لطفاً موضوع پست یا ریلز خود را تایپ کنید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:"
     )
-    
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(msg_text, parse_mode='Markdown')
@@ -304,12 +413,9 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'hashtags_generated_success', topic)
-            
     except Exception as e:
         log_event(user_id, 'hashtag_error', str(e))
-        logger.error(f"Hashtag generation error: {e}")
         await wait_msg.edit_text("❌ مشکلی در تولید هشتگ‌ها پیش آمد.")
-
     return ConversationHandler.END
 
 # ---------------------------------------------
@@ -325,7 +431,6 @@ async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "آیا خودتان ایده‌ای برای ریلز، کپشن یا متنی آماده کرده‌اید؟\n"
         "آن را اینجا بفرستید تا من آن را بررسی کنم و راهکارهایی برای وایرال شدنش پیشنهاد دهم."
     )
-    
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(msg_text, parse_mode='Markdown')
@@ -378,12 +483,9 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'coach_analyzed_success')
-            
     except Exception as e:
         log_event(user_id, 'coach_error', str(e))
-        logger.error(f"Coach generation error: {e}")
         await wait_msg.edit_text("❌ مشکلی در آنالیز ایده پیش آمد.")
-
     return ConversationHandler.END
 
 # ---------------------------------------------
@@ -547,18 +649,29 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
-    # دستورات منوی اصلی
+    # --- دستورات اصلی و ادمین ---
     application.add_handler(CommandHandler('start', show_main_menu))
     application.add_handler(CommandHandler('menu', show_main_menu))
+    application.add_handler(CommandHandler('admin', admin_start))
     
     # هندلرهای ساده برای دکمه‌های منو که Conversation نیستند
     application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota)$'))
+    application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^admin_stats$'))
     
-    # هندلر ساخت پروفایل
+    # --- هندلر ارسال پیام همگانی (ادمین) ---
+    admin_broadcast_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(admin_broadcast_start, pattern='^admin_broadcast_start$')],
+        states={
+            A_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_send)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_action)],
+    )
+    
+    # --- هندلر ساخت پروفایل ---
     profile_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('profile', profile_start),
-            CallbackQueryHandler(profile_start, pattern='^menu_profile$') # پشتیبانی از دکمه منو
+            CallbackQueryHandler(profile_start, pattern='^menu_profile$')
         ],
         states={
             P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
@@ -569,11 +682,11 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
 
-    # هندلر هشتگ ساز
+    # --- هندلر هشتگ ساز ---
     hashtag_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('hashtags', hashtag_start),
-            CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$') # پشتیبانی از دکمه منو
+            CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$')
         ],
         states={
             H_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, hashtag_generate)],
@@ -581,11 +694,11 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
-    # هندلر مربی ایده
+    # --- هندلر مربی ایده ---
     coach_conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('coach', coach_start),
-            CallbackQueryHandler(coach_start, pattern='^menu_coach$') # پشتیبانی از دکمه منو
+            CallbackQueryHandler(coach_start, pattern='^menu_coach$')
         ],
         states={
             C_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, coach_analyze)],
@@ -593,7 +706,7 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
-    # هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد)
+    # --- هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد) ---
     content_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
         states={
@@ -602,10 +715,12 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
     
+    # اضافه کردن تمام هندلرها به اپلیکیشن
+    application.add_handler(admin_broadcast_handler)
     application.add_handler(profile_conv_handler)
     application.add_handler(hashtag_conv_handler)
     application.add_handler(coach_conv_handler)
     application.add_handler(content_conv_handler)
     
-    print("🤖 BOT DEPLOYED WITH FULL GLASS MENU & NAVIGATION!")
+    print("🤖 BOT DEPLOYED WITH ADMIN PANEL, QUOTA & GLASS MENU!")
     application.run_polling()
