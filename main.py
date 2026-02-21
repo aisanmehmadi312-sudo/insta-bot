@@ -239,41 +239,60 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
 P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
+    context.user_data.clear() # پاک کردن حافظه قبلی برای شروع امن
     msg = "۱/۴ - موضوع اصلی پیج؟"
     if update.callback_query: await update.callback_query.message.reply_text(msg)
     else: await update.message.reply_text(msg)
     return P_BUSINESS
+
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['business'] = update.message.text
     kb = [[InlineKeyboardButton("فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی", callback_data='goal_awareness')],
           [InlineKeyboardButton("آموزش", callback_data='goal_education'), InlineKeyboardButton("سرگرمی", callback_data='goal_community')]]
     await update.message.reply_text("۲/۴ - هدف اصلی؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_GOAL
+
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    # محافظ حافظه
+    if 'business' not in context.user_data:
+        await query.edit_message_text("⚠️ زمان نشست تمام شده یا ربات بروزرسانی شده. لطفاً دوباره از منو /profile را بزنید.")
+        return ConversationHandler.END
+        
     context.user_data['goal'] = next(btn.text for r in query.message.reply_markup.inline_keyboard for btn in r if btn.callback_data == query.data)
     await query.edit_message_text(f"✅ هدف: {context.user_data['goal']}")
     await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف؟")
     return P_AUDIENCE
+
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if 'goal' not in context.user_data: return ConversationHandler.END # محافظ
     context.user_data['audience'] = update.message.text
     kb = [[InlineKeyboardButton("صمیمی", callback_data='tone_friendly'), InlineKeyboardButton("رسمی", callback_data='tone_formal')],
           [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("طنز", callback_data='tone_humorous')],
           [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
+
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    # محافظ حافظه نهایی
+    if 'business' not in context.user_data or 'audience' not in context.user_data:
+        await query.edit_message_text("⚠️ خطای حافظه به دلیل آپدیت ربات. لطفاً مجدداً از منو پروفایل را بسازید.")
+        return ConversationHandler.END
+        
     context.user_data['tone'] = next(btn.text for r in query.message.reply_markup.inline_keyboard for btn in r if btn.callback_data == query.data)
     await query.edit_message_text(f"✅ لحن: {context.user_data['tone']}")
     try:
         supabase.table('profiles').upsert({'user_id': str(update.effective_user.id), **context.user_data}).execute()
         await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل ذخیره شد!", reply_markup=get_main_menu_keyboard())
-    except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره.")
+    except Exception as e: 
+        logger.error(f"Save error: {e}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره دیتابیس.")
     context.user_data.clear()
     return ConversationHandler.END
+
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query: await update.callback_query.edit_message_text("لغو شد.")
@@ -281,16 +300,14 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- قابلیت هشتگ‌های هوشمند (با دژبان) ---
+# --- هشتگ ساز ---
 H_TOPIC = 5
-
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     msg = "🏷 **هشتگ‌ساز!** موضوع را تایپ یا ویس کنید:"
     if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
     else: await update.message.reply_text(msg, parse_mode='Markdown')
     return H_TOPIC
-
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
@@ -303,64 +320,36 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
-    except:
-        await update.message.reply_text("❌ اول پروفایل بسازید.")
-        return ConversationHandler.END
-
-    wait_msg = await update.message.reply_text("⏳ در حال استخراج و تحلیل هشتگ‌ها...")
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-
-    try:
+        wait_msg = await update.message.reply_text("⏳ در حال تولید هشتگ...")
         prompt = f"""
-        **شخصیت:** تو یک مدیر سخت‌گیر ایرانی هستی.
-        
-        **مرحله اول (فیلتر):**
-        آیا موضوع درخواستی ({topic}) با کسب‌وکار کاربر ({prof['business']}) ارتباط منطقی و تجاری دارد؟
-        
+        **شخصیت:** مدیر استراتژی محتوای سخت‌گیر ایرانی.
+        **مرحله اول (فیلتر):** آیا ({topic}) با کسب‌وکار ({prof['business']}) ارتباط تجاری دارد؟
         **مرحله دوم (خروجی JSON):**
-        فقط یک آبجکت JSON خروجی بده.
-        
-        اگر بی‌ربط بود:
-        {{
-            "is_relevant": false,
-            "rejection_message": "موضوع «{topic}» با کسب‌وکار شما ارتباطی ندارد.",
-            "hashtags_text": ""
-        }}
-
-        اگر مرتبط بود:
-        {{
-            "is_relevant": true,
-            "rejection_message": "",
-            "hashtags_text": "🎯 هشتگ‌های پربازدید:\\n#هشتگ۱...\\n\\n🔬 هشتگ‌های تخصصی:\\n#هشتگ۱...\\n\\n🤝 هشتگ‌های کامیونیتی:\\n#هشتگ۱..."
-        }}
+        فقط یک آبجکت JSON بده.
+        اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار شما ارتباطی ندارد.", "hashtags_text": ""}}
+        اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "hashtags_text": "🎯 پربازدید:\\n#هشتگ...\\n\\n🔬 تخصصی:\\n#هشتگ...\\n\\n🤝 کامیونیتی:\\n#هشتگ..."}}
         """
         response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(response.choices[0].message.content)
         
         if not response_data.get("is_relevant", True):
-            await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'موضوع نامرتبط است.')}")
-            log_event(uid, 'hashtag_rejected_gatekeeper', topic)
+            await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
 
         hashtags_text = response_data.get("hashtags_text", "").replace('*', '')
         await wait_msg.edit_text(hashtags_text)
         log_event(uid, 'hashtags_generated_success', topic)
-    except Exception as e:
-        await wait_msg.edit_text(f"❌ خطا در تولید هشتگ: {e}")
-
+    except: await update.message.reply_text("❌ خطا در تولید هشتگ یا یافتن پروفایل.")
     return ConversationHandler.END
 
-# ---------------------------------------------
-# --- قابلیت مربی ایده‌پردازی (با دژبان) ---
+# --- مربی ایده ---
 C_TEXT = 6
-
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     msg = "🧠 **مربی ایده!** ایده خود را بنویسید یا ویس بفرستید:"
     if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
     else: await update.message.reply_text(msg, parse_mode='Markdown')
     return C_TEXT
-
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
@@ -373,56 +362,30 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
-    except:
-        await update.message.reply_text("❌ اول پروفایل بسازید.")
-        return ConversationHandler.END
-
-    wait_msg = await update.message.reply_text("🧐 در حال آنالیز...")
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-
-    try:
+        wait_msg = await update.message.reply_text("🧐 در حال آنالیز...")
         prompt = f"""
         **شخصیت:** مربی سخت‌گیر محتوای ایرانی.
-        
-        **مرحله اول (فیلتر):**
-        آیا این ایده ({idea}) با کسب‌وکار ({prof['business']}) کاملاً بی‌ربط است؟
-        
+        **مرحله اول (فیلتر):** آیا این ایده ({idea}) با کسب‌وکار ({prof['business']}) بی‌ربط است؟
         **مرحله دوم (خروجی JSON):**
         فقط یک آبجکت JSON بده.
-        
-        اگر بی‌ربط بود:
-        {{
-            "is_relevant": false,
-            "rejection_message": "ایده مطرح شده با کسب‌وکار شما ارتباطی ندارد.",
-            "coach_text": ""
-        }}
-
-        اگر مرتبط بود:
-        {{
-            "is_relevant": true,
-            "rejection_message": "",
-            "coach_text": "۱. نقاط قوت...\\n۲. نقاط ضعف...\\n۳. پیشنهاد اصلاحی من..."
-        }}
+        اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "ایده با کسب‌وکار شما ارتباطی ندارد.", "coach_text": ""}}
+        اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "coach_text": "۱. نقاط قوت...\\n۲. نقاط ضعف...\\n۳. پیشنهاد اصلاحی..."}}
         """
         response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(response.choices[0].message.content)
         
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}")
-            log_event(uid, 'coach_rejected_gatekeeper', idea)
             return ConversationHandler.END
 
         coach_text = response_data.get("coach_text", "").replace('*', '')
         await wait_msg.edit_text(coach_text)
         log_event(uid, 'coach_analyzed_success', idea)
-    except Exception as e:
-        await wait_msg.edit_text("❌ خطا در آنالیز.")
+    except: await update.message.reply_text("❌ خطا در آنالیز یا یافتن پروفایل.")
     return ConversationHandler.END
 
-# ---------------------------------------------
-# --- سناریو ساز (با دژبان قبلی) ---
+# --- سناریو ساز ---
 IDEAS, EXPAND = range(7, 9)
-
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_services(update) or not await check_daily_limit(update, uid): return ConversationHandler.END
@@ -436,7 +399,7 @@ async def check_profile_before_content(update: Update, context: ContextTypes.DEF
         else: context.user_data['topic'] = update.message.text
         return await generate_ideas(update, context)
     except:
-        await update.message.reply_text("❌ پروفایل یافت نشد.")
+        await update.message.reply_text("❌ لطفاً ابتدا پروفایل خود را بسازید.")
         return ConversationHandler.END
         
 async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -445,30 +408,16 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         prompt = f"""
         **شخصیت:** استراتژیست سخت‌گیر ایرانی.
-        
-        **مرحله اول (فیلتر):**
-        بررسی کن آیا ({topic}) با ({prof['business']}) ارتباط تجاری دارد؟
-
+        **مرحله اول (فیلتر):** بررسی کن آیا ({topic}) با ({prof['business']}) ارتباط تجاری دارد؟
         **مرحله دوم (خروجی JSON):**
-        اگر بی‌ربط بود:
-        {{
-            "is_relevant": false,
-            "rejection_message": "موضوع «{topic}» با کسب‌وکار شما ارتباطی ندارد.",
-            "ideas": []
-        }}
-        اگر مرتبط بود:
-        {{
-            "is_relevant": true,
-            "rejection_message": "",
-            "ideas": [{{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}]
-        }}
+        اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار ارتباطی ندارد.", "ideas": []}}
+        اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "ideas": [{{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}]}}
         """
         res = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(res.choices[0].message.content)
         
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}")
-            log_event(str(update.effective_user.id), 'topic_rejected_gatekeeper', topic)
             return ConversationHandler.END
 
         ideas = response_data.get("ideas", [])
@@ -487,6 +436,12 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    
+    # محافظ حافظه برای منقضی شدن نشست در این مرحله
+    if 'ideas' not in context.user_data or 'profile' not in context.user_data:
+        await query.edit_message_text("⚠️ زمان نشست تمام شده. لطفاً دوباره موضوع را بفرستید.")
+        return ConversationHandler.END
+        
     idea = context.user_data['ideas'][int(query.data.split('_')[1])]
     prof = context.user_data['profile']
     await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریو...")
@@ -543,5 +498,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: GATEKEEPER APPLIED TO ALL FEATURES!")
+    print("🤖 BOT DEPLOYED WITH MEMORY PROTECTION!")
     application.run_polling()
