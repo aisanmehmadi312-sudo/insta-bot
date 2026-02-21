@@ -64,18 +64,17 @@ def is_admin(user_id: int) -> bool:
     return ADMIN_ID and str(user_id) == str(ADMIN_ID)
 
 async def check_maintenance(update: Update) -> bool:
-    """اگر حالت تعمیرات روشن باشد و کاربر ادمین نباشد، دسترسی را می‌بندد."""
     if MAINTENANCE_MODE and not is_admin(update.effective_user.id):
         msg = "🛠 **ربات در حال بروزرسانی است!**\n\nبرای ارتقای کیفیت خدمات، ربات برای دقایقی در حالت تعمیرات قرار دارد. لطفاً کمی بعد دوباره مراجعه کنید. 🙏"
         if update.callback_query:
             await update.callback_query.answer("ربات در حال بروزرسانی است 🛠", show_alert=True)
         else:
             await update.message.reply_text(msg, parse_mode='Markdown')
-        return True # یعنی در حالت تعمیرات هستیم
-    return False # یعنی آزاد است
+        return True 
+    return False 
 
 async def check_services(update: Update) -> bool:
-    if await check_maintenance(update): return False # چک کردن حالت تعمیرات
+    if await check_maintenance(update): return False 
     message_target = update.callback_query.message if update.callback_query else update.message
     if not supabase or not client:
         await message_target.reply_text("❌ سیستم در حال حاضر با مشکل ارتباطی روبروست.")
@@ -101,7 +100,7 @@ async def get_today_usage(user_id: str = None) -> int:
         return 0
 
 async def check_daily_limit(update: Update, user_id: str) -> bool:
-    if is_admin(update.effective_user.id): return True # ادمین محدودیت ندارد!
+    if is_admin(update.effective_user.id): return True 
     usage_count = await get_today_usage(user_id)
     if usage_count >= DAILY_LIMIT:
         message_target = update.callback_query.message if update.callback_query else update.message
@@ -109,7 +108,6 @@ async def check_daily_limit(update: Update, user_id: str) -> bool:
         return False
     return True
 
-# --- تابع پردازش صدا ---
 async def process_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
     wait_msg = await update.message.reply_text("🎙 در حال تبدیل صدای شما به متن...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
@@ -136,7 +134,8 @@ def get_admin_keyboard():
     m_text = "🟢 روشن" if MAINTENANCE_MODE else "🔴 خاموش"
     keyboard = [
         [InlineKeyboardButton("📊 آمار کلی ربات", callback_data='admin_stats')],
-        [InlineKeyboardButton("🕵️‍♂️ ۵ درخواست اخیر کاربران", callback_data='admin_monitor')],
+        [InlineKeyboardButton("🕵️‍♂️ مانیتورینگ درخواست‌ها", callback_data='admin_monitor')],
+        [InlineKeyboardButton("👥 ۵ کاربر اخیر", callback_data='admin_recent_users')],
         [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data='admin_broadcast_start')],
         [InlineKeyboardButton(f"🛠 حالت تعمیرات: {m_text}", callback_data='admin_toggle_maintenance')]
     ]
@@ -169,30 +168,41 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             
     elif query.data == 'admin_monitor':
         try:
-            response = supabase.table('logs').select("user_id, event_type, content, created_at")\
-                .in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success'])\
-                .order('created_at', desc=True).limit(5).execute()
-            
+            response = supabase.table('logs').select("user_id, event_type, content, created_at").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success']).order('created_at', desc=True).limit(5).execute()
             logs = response.data
             if not logs:
                 await query.message.reply_text("📭 هنوز هیچ درخواستی ثبت نشده است.")
                 return
-                
             msg = "🕵️‍♂️ **۵ درخواست اخیر کاربران:**\n\n"
             for idx, log in enumerate(logs):
                 event_name = "سناریونویس 🎬"
                 if log['event_type'] == 'hashtags_generated_success': event_name = "هشتگ‌ساز 🏷"
                 elif log['event_type'] == 'coach_analyzed_success': event_name = "مربی ایده 🧠"
-                
-                msg += f"**{idx+1}. ابزار:** {event_name}\n"
-                msg += f"👤 **آیدی کاربر:** `{log['user_id']}`\n"
-                msg += f"📝 **موضوع درخواست:** {log['content']}\n"
-                msg += "──────────────\n"
-                
+                msg += f"**{idx+1}. ابزار:** {event_name}\n👤 **آیدی کاربر:** `{log['user_id']}`\n📝 **موضوع:** {log['content']}\n──────────────\n"
             await query.message.reply_text(msg, parse_mode='Markdown')
         except Exception as e:
-            logger.error(f"Admin monitor error: {e}")
-            await query.message.reply_text("❌ خطا در دریافت اطلاعات مانیتورینگ.")
+            await query.message.reply_text("❌ خطا در دریافت مانیتورینگ.")
+
+    elif query.data == 'admin_recent_users':
+        try:
+            # دریافت ۵ پروفایل آخری که ساخته شده‌اند بر اساس زمان ایجاد
+            response = supabase.table('profiles').select("*").order('created_at', desc=True).limit(5).execute()
+            users = response.data
+            if not users:
+                await query.message.reply_text("📭 هنوز هیچ کاربری ثبت نشده است.")
+                return
+            
+            msg = "👥 **لیست ۵ کاربر اخیر:**\n\n"
+            for idx, u in enumerate(users):
+                goal_text = u.get('goal', 'نامشخص')
+                msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n"
+                msg += f"💼 **کسب‌وکار:** {u['business']}\n"
+                msg += f"🎯 **هدف:** {goal_text}\n"
+                msg += "──────────────\n"
+            await query.message.reply_text(msg, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Recent users error: {e}")
+            await query.message.reply_text("❌ خطا در دریافت لیست کاربران.")
 
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -229,7 +239,7 @@ def get_main_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update): return # چک کردن حالت تعمیرات
+    if await check_maintenance(update): return 
     log_event(str(update.effective_user.id), 'opened_main_menu')
     text = "سلام! از منوی زیر انتخاب کنید:\n*(می‌تونید ویس هم بفرستید!)*"
     if update.callback_query:
@@ -239,7 +249,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
 
 async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update): return # چک کردن حالت تعمیرات
+    if await check_maintenance(update): return 
     query = update.callback_query
     await query.answer()
     if query.data == 'menu_scenario':
@@ -407,8 +417,8 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler('admin', admin_start))
     application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota)$'))
     
-    # اضافه شدن هندلر دکمه‌های ادمین (از جمله حالت تعمیرات)
-    application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^(admin_stats|admin_monitor|admin_toggle_maintenance)$'))
+    # هندلر دکمه‌های ادمین آپدیت شد
+    application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^(admin_stats|admin_monitor|admin_recent_users|admin_toggle_maintenance)$'))
     
     application.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_broadcast_start, pattern='^admin_broadcast_start$')],
@@ -445,5 +455,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: MAINTENANCE MODE ADDED!")
+    print("🤖 BOT DEPLOYED: ADMIN PANEL WITH RECENT USERS!")
     application.run_polling()
