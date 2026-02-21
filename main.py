@@ -71,9 +71,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_event(update.effective_user.id, 'start_command')
     welcome_message = (
         "سلام! 👋 به دستیار هوشمند تولید محتوای اینستاگرام خوش آمدید.\n\n"
-        "🛠 **قدم اول:** ابتدا روی دستور /profile کلیک کنید تا پروفایل کسب‌وکارتان را بسازیم.\n\n"
-        "✍️ **سناریونویسی:** هر زمان موضوعی برای ریلز داشتید، کافیست آن را اینجا تایپ کنید تا ۳ ایده برایتان تولید کنم.\n\n"
-        "🏷 **هشتگ‌ساز:** برای دریافت هشتگ‌های حرفه‌ای برای پست‌هایتان، روی /hashtags کلیک کنید."
+        "🛠 **پروفایل:** ابتدا با /profile پروفایل کسب‌وکارتان را بسازید.\n\n"
+        "✍️ **سناریونویسی:** هر زمان موضوعی داشتید، فقط آن را تایپ کنید تا برایتان ایده بسازم.\n\n"
+        "🏷 **هشتگ‌ساز:** برای دریافت هشتگ، از /hashtags استفاده کنید.\n\n"
+        "🧠 **مربی ایده:** اگر خودت ایده‌ای نوشتی و میخوای بررسیش کنم، روی /coach کلیک کن."
     )
     await update.message.reply_text(welcome_message)
 
@@ -138,7 +139,7 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         supabase.table('profiles').upsert(profile_data, on_conflict='user_id').execute()
         log_event(user_id, 'profile_saved')
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!\nحالا می‌توانید موضوع ریلز را تایپ کنید یا از /hashtags استفاده کنید.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!\nحالا می‌توانید موضوع ریلز را تایپ کنید.")
     except Exception as e:
         logger.error(f"Supabase upsert Error: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ خطا در ذخیره دیتابیس.")
@@ -157,7 +158,7 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 # ---------------------------------------------
-# --- 2. قابلیت جدید: هشتگ‌های هوشمند (/hashtags) ---
+# --- 2. قابلیت جدید 1: هشتگ‌های هوشمند (/hashtags) ---
 H_TOPIC = 5
 
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -165,8 +166,7 @@ async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     log_event(update.effective_user.id, 'hashtag_start')
     await update.message.reply_text(
         "🏷 **به ابزار هشتگ‌ساز هوشمند خوش آمدید!**\n\n"
-        "لطفاً موضوع پست یا ریلز خود را بنویسید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:",
-        parse_mode='Markdown'
+        "لطفاً موضوع پست یا ریلز خود را بنویسید تا بهترین هشتگ‌ها را بر اساس پروفایلتان تولید کنم:"
     )
     return H_TOPIC
 
@@ -197,27 +197,25 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         - مخاطب: {user_profile['audience']}
         - موضوع پست: "{topic}"
 
-        **ساختار خروجی (دقیقاً همین ساختار را رعایت کن و هیچ متن اضافه‌ای ننویس):**
-        
-        🎯 **هشتگ‌های پربازدید (Broad):** (۵ هشتگ کلی و پرجستجو)
+        **ساختار خروجی:**
+        🎯 هشتگ‌های پربازدید:
         #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
 
-        🔬 **هشتگ‌های تخصصی (Niche):** (۵ هشتگ بسیار دقیق و مرتبط با موضوع)
+        🔬 هشتگ‌های تخصصی:
         #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
 
-        🤝 **هشتگ‌های کامیونیتی و مخاطب (Community):** (۵ هشتگ مرتبط با دغدغه مخاطبان)
+        🤝 هشتگ‌های کامیونیتی:
         #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
         """
         
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         ai_reply = response.choices[0].message.content.strip()
         
-        try:
-            await wait_msg.edit_text(ai_reply, parse_mode='Markdown')
-            log_event(user_id, 'hashtags_generated_success', topic)
-        except BadRequest as e:
-            logger.warning(f"Markdown error in hashtags: {e}")
-            await wait_msg.edit_text("⚠️ خروجی:\n\n" + ai_reply)
+        # حذف ستاره‌ها برای جلوگیری از ارور مارک‌داون
+        if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
+
+        await wait_msg.edit_text(ai_reply)
+        log_event(user_id, 'hashtags_generated_success', topic)
             
     except Exception as e:
         log_event(user_id, 'hashtag_error', str(e))
@@ -226,10 +224,78 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     return ConversationHandler.END
 
+# ---------------------------------------------
+# --- 3. قابلیت جدید 2: مربی ایده‌پردازی (/coach) ---
+C_TEXT = 6
+
+async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not await check_services(update): return ConversationHandler.END
+    log_event(update.effective_user.id, 'coach_start')
+    await update.message.reply_text(
+        "🧠 **به بخش مربی ایده خوش آمدید!**\n\n"
+        "آیا خودتان ایده‌ای برای ریلز، کپشن یا متنی آماده کرده‌اید؟\n"
+        "آن را اینجا بفرستید تا من مثل یک مشاور حرفه‌ای آن را بررسی کنم و راهکارهایی برای وایرال شدن و جذاب‌تر شدنش به شما پیشنهاد دهم."
+    )
+    return C_TEXT
+
+async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user_id = str(update.effective_user.id)
+    user_idea_text = update.message.text
+    
+    try:
+        response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
+        if not response.data:
+            await update.message.reply_text("❌ اول باید پروفایلت رو با دستور /profile بسازی تا بدونم کسب‌وکارت چیه.")
+            return ConversationHandler.END
+        user_profile = response.data[0]
+    except Exception as e:
+        await update.message.reply_text("❌ خطا در خواندن اطلاعات از دیتابیس.")
+        return ConversationHandler.END
+
+    wait_msg = await update.message.reply_text("🧐 در حال آنالیز ایده شما...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
+    try:
+        prompt = f"""
+        **شخصیت:** تو یک مربی سخت‌گیر اما سازنده و حرفه‌ای برای تولید محتوای اینستاگرام در ایران هستی.
+        **ماموریت:** کاربر یک ایده یا متن خام برای پیجش نوشته است. وظیفه تو این است که این ایده را بر اساس پروفایلش نقد و بررسی کنی و نسخه بهتری پیشنهاد دهی.
+
+        **اطلاعات پروفایل کاربر:**
+        - کسب‌وکار: {user_profile['business']}
+        - هدف: {user_profile.get('goal', 'نامشخص')}
+        - مخاطب: {user_profile['audience']}
+        - لحن برند: {user_profile['tone']}
+
+        **ایده نوشته شده توسط کاربر:**
+        "{user_idea_text}"
+
+        **ساختار پاسخ تو (فقط به زبان فارسی و روان):**
+        ۱. نقاط قوت ایده (چه چیزی در این متن خوب است؟)
+        ۲. نقاط ضعف و جای بهبود (چه چیزی کم است؟ مثلاً قلاب ضعیف است یا کال‌تو‌اکشن ندارد؟ آیا با هدف کسب‌وکار همخوانی دارد؟)
+        ۳. پیشنهاد اصلاحی من (یک نسخه بازنویسی شده، جذاب‌تر و حرفه‌ای‌تر از همان ایده کاربر را بنویس که قلاب قوی‌تر و ساختار بهتری داشته باشد.)
+
+        **قانون مهم:** از هیچ‌گونه علامت ستاره (*) برای بولد کردن در پاسخ استفاده نکن. متن باید ساده و روان باشد.
+        """
+        
+        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
+        ai_reply = response.choices[0].message.content.strip()
+        
+        # حذف ستاره‌ها برای جلوگیری از ارور
+        if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
+
+        await wait_msg.edit_text(ai_reply)
+        log_event(user_id, 'coach_analyzed_success')
+            
+    except Exception as e:
+        log_event(user_id, 'coach_error', str(e))
+        logger.error(f"Coach generation error: {e}")
+        await wait_msg.edit_text("❌ مشکلی در آنالیز ایده پیش آمد.")
+
+    return ConversationHandler.END
 
 # ---------------------------------------------
-# --- 3. مراحل مکالمه تولید محتوا (ایده‌پردازی و سناریو) ---
-IDEAS, EXPAND = range(6, 8)
+# --- 4. مراحل مکالمه تولید محتوا (ایده‌پردازی و سناریو اصلی) ---
+IDEAS, EXPAND = range(7, 9)
 
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
@@ -301,10 +367,10 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         message_text = f"عالی! برای موضوع «{topic}»، سه ایده متفاوت پیدا کردم:\n\n"
         for i, idea in enumerate(ideas_json):
-            message_text += f"**{idea['title']}**\n- قلاب: «{idea['hook']}»\n\n"
+            message_text += f"ایده {i+1}: {idea['title']}\n- قلاب: «{idea['hook']}»\n\n"
         message_text += "کدام یک را برایت به سناریوی کامل تبدیل کنم؟"
         
-        await wait_msg.edit_text(message_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await wait_msg.edit_text(message_text, reply_markup=reply_markup)
         log_event(str(update.effective_user.id), 'ideas_generated', topic)
         return EXPAND
 
@@ -346,34 +412,39 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         **ساختار نقشه ساخت (در صورت مرتبط بودن - فقط فارسی):**
         ### 🎬 نقشه ساخت ریلز: {chosen_idea['title']}
 
-        **۱. قلاب (۰-۳ ثانیه):**
-        - **تصویر:** (شرح صحنه اول)
-        - **متن روی صفحه:** «{chosen_idea['hook']}»
+        ۱. قلاب (۰-۳ ثانیه):
+        - تصویر: (شرح صحنه اول)
+        - متن روی صفحه: «{chosen_idea['hook']}»
 
-        **۲. بدنه اصلی (۴-۲۰ ثانیه):**
-        - **تصویر:** (شرح سکانس‌ها)
-        - **گفتار:** (متن صحبت‌ها)
+        ۲. بدنه اصلی (۴-۲۰ ثانیه):
+        - تصویر: (شرح سکانس‌ها)
+        - گفتار: (متن صحبت‌ها)
 
-        **۳. فراخوان به اقدام (۲۱-۳۰ ثانیه):**
-        - **تصویر:** (شرح صحنه پایانی)
-        - **متن روی صفحه:** (درخواست واضح از مخاطب)
+        ۳. فراخوان به اقدام (۲۱-۳۰ ثانیه):
+        - تصویر: (شرح صحنه پایانی)
+        - متن روی صفحه: (درخواست واضح از مخاطب)
         
         ---
         ### ✍️ کپشن
-        - **کپشن:** (کپشن جذاب فارسی)
+        - کپشن: (کپشن جذاب فارسی)
+        
+        **قانون نهایی:** هرگز از کاراکتر `*` برای بولد کردن استفاده نکن.
         """
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_expansion}])
         ai_reply = response.choices[0].message.content.strip()
 
         is_rejection = ai_reply.startswith("موضوع با پروفایل")
         message_to_send = f"⚠️ توجه:\n{ai_reply}" if is_rejection else ai_reply
+        
+        # حذف ستاره‌ها
+        if '*' in message_to_send: message_to_send = message_to_send.replace('*', '')
 
         try:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=message_to_send, parse_mode='Markdown')
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=message_to_send)
             if not is_rejection: log_event(str(update.effective_user.id), 'expansion_success', chosen_idea['title'])
         except BadRequest as e:
-            logger.warning(f"Markdown parsing failed. Error: {e}")
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ خطا در قالب‌بندی نمایش. متن خام:\n\n" + message_to_send)
+            logger.warning(f"Error sending message: {e}")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ خطا در ارسال پیام.")
             
     except Exception as e:
         log_event(str(update.effective_user.id), 'expansion_error', str(e))
@@ -384,45 +455,4 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 
-# ---------------------------------------------
-if __name__ == '__main__':
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    
-    # هندلر ساخت پروفایل
-    profile_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('profile', profile_start)],
-        states={
-            P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
-            P_GOAL: [CallbackQueryHandler(get_goal, pattern='^goal_')],
-            P_AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
-            P_TONE: [CallbackQueryHandler(get_tone_and_save, pattern='^tone_')],
-        },
-        fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
-    )
-
-    # هندلر هشتگ ساز
-    hashtag_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('hashtags', hashtag_start)],
-        states={
-            H_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, hashtag_generate)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel_action)],
-    )
-
-    # هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد)
-    content_conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
-        states={
-            EXPAND: [CallbackQueryHandler(expand_idea, pattern='^expand_')],
-        },
-        fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
-    )
-    
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(profile_conv_handler)
-    application.add_handler(hashtag_conv_handler) # اضافه شدن هندلر هشتگ
-    application.add_handler(content_conv_handler)
-    
-    print("🤖 BOT DEPLOYED WITH SMART HASHTAGS FEATURE!")
-    application.run_polling()
-    
+# ------------------------------
