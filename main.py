@@ -24,14 +24,14 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# --- سرور وب ارتقا یافته برای Render ---
+# --- سرور وب برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is alive!")
         
-    def do_HEAD(self): # اضافه شدن پاسخ به متد HEAD برای Render
+    def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
 
@@ -216,7 +216,6 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         ai_reply = response.choices[0].message.content.strip()
         
-        # حذف ستاره‌ها برای جلوگیری از ارور مارک‌داون
         if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
 
         await wait_msg.edit_text(ai_reply)
@@ -286,7 +285,6 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         ai_reply = response.choices[0].message.content.strip()
         
-        # حذف ستاره‌ها
         if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
 
         await wait_msg.edit_text(ai_reply)
@@ -468,4 +466,46 @@ if __name__ == '__main__':
     profile_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('profile', profile_start)],
         states={
-            P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMA
+            P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)],
+            P_GOAL: [CallbackQueryHandler(get_goal, pattern='^goal_')],
+            P_AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)],
+            P_TONE: [CallbackQueryHandler(get_tone_and_save, pattern='^tone_')],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
+    )
+
+    # هندلر هشتگ ساز
+    hashtag_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('hashtags', hashtag_start)],
+        states={
+            H_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, hashtag_generate)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_action)],
+    )
+
+    # هندلر مربی ایده
+    coach_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('coach', coach_start)],
+        states={
+            C_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, coach_analyze)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_action)],
+    )
+
+    # هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد)
+    content_conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
+        states={
+            EXPAND: [CallbackQueryHandler(expand_idea, pattern='^expand_')],
+        },
+        fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
+    )
+    
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(profile_conv_handler)
+    application.add_handler(hashtag_conv_handler)
+    application.add_handler(coach_conv_handler)
+    application.add_handler(content_conv_handler)
+    
+    print("🤖 BOT DEPLOYED FULLY OPERATIONAL!")
+    application.run_polling()
