@@ -2,6 +2,7 @@ import os
 import logging
 import threading
 import json
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from openai import OpenAI
@@ -23,6 +24,9 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# محدودیت استفاده روزانه برای هر کاربر (می‌توانی این عدد را تغییر دهی)
+DAILY_LIMIT = 5
 
 # --- سرور وب برای بیدار نگه داشتن Render ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
@@ -52,14 +56,13 @@ if SUPABASE_URL and SUPABASE_KEY:
     try: supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception as e: logger.error(f"Supabase Config Error: {e}")
 
-# --- تابع بررسی سلامت سرویس‌ها ---
+# --- توابع کمکی ---
 async def check_services(update: Update) -> bool:
     if not supabase or not client:
         await update.message.reply_text("❌ سیستم در حال حاضر با مشکل ارتباطی روبروست. لطفاً بعداً تلاش کنید.")
         return False
     return True
 
-# --- تابع ثبت آمار ---
 def log_event(user_id: str, event_type: str, content: str = ""):
     if not supabase: return
     try:
@@ -67,6 +70,38 @@ def log_event(user_id: str, event_type: str, content: str = ""):
         supabase.table('logs').insert(data_to_insert).execute()
     except Exception as e:
         logger.error(f"Supabase log event error: {e}")
+
+# --- تابع جدید: بررسی محدودیت روزانه ---
+async def check_daily_limit(update: Update, user_id: str) -> bool:
+    """تعداد درخواست‌های امروز کاربر را چک می‌کند."""
+    if not supabase: return False
+    try:
+        # تاریخ امروز (به وقت UTC که با دیتابیس هماهنگ است)
+        today = datetime.now(timezone.utc).date().isoformat()
+        
+        # شمارش رویدادهای تولید محتوا برای این کاربر در امروز
+        # از event_type هایی که به API ریکوئست می‌زنند استفاده می‌کنیم
+        response = supabase.table('logs').select("id", count="exact")\
+            .eq('user_id', user_id)\
+            .in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success'])\
+            .gte('created_at', f"{today}T00:00:00Z")\
+            .execute()
+            
+        usage_count = response.count if response.count else 0
+        
+        if usage_count >= DAILY_LIMIT:
+            await update.message.reply_text(
+                f"⚠️ **محدودیت استفاده روزانه**\n\n"
+                f"شما امروز به سقف مجاز خود ({DAILY_LIMIT} درخواست) رسیده‌اید.\n"
+                "برای حفظ کیفیت خدمات، لطفاً فردا دوباره مراجعه کنید. متشکریم! 🙏",
+                parse_mode='Markdown'
+            )
+            return False # یعنی اجازه عبور ندارد
+        return True # یعنی اجازه عبور دارد
+        
+    except Exception as e:
+        logger.error(f"Error checking daily limit: {e}")
+        return True # در صورت خطای دیتابیس، سخت‌گیری نمی‌کنیم تا ربات از کار نیفتد
 
 # ---------------------------------------------
 
@@ -78,9 +113,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 **پروفایل:** ابتدا با /profile پروفایل کسب‌وکارتان را بسازید.\n\n"
         "✍️ **سناریونویسی:** هر زمان موضوعی داشتید، فقط آن را تایپ کنید تا برایتان ایده بسازم.\n\n"
         "🏷 **هشتگ‌ساز:** برای دریافت هشتگ، از /hashtags استفاده کنید.\n\n"
-        "🧠 **مربی ایده:** اگر خودت ایده‌ای نوشتی و میخوای بررسیش کنم، روی /coach کلیک کن."
+        "🧠 **مربی ایده:** اگر خودت ایده‌ای نوشتی و میخوای بررسیش کنم، روی /coach کلیک کن.\n\n"
+        f"*(سهمیه روزانه شما: {DAILY_LIMIT} درخواست)*"
     )
-    await update.message.reply_text(welcome_message)
+    await update.message.reply_text(welcome_message, parse_mode='Markdown')
 
 # ---------------------------------------------
 # --- 1. مراحل مکالمه پروفایل ---
@@ -162,7 +198,7 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 # ---------------------------------------------
-# --- 2. قابلیت جدید 1: هشتگ‌های هوشمند (/hashtags) ---
+# --- 2. قابلیت هشتگ‌های هوشمند (/hashtags) ---
 H_TOPIC = 5
 
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -177,6 +213,11 @@ async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
+    
+    # ----> بررسی محدودیت روزانه قبل از اجرای درخواست <----
+    if not await check_daily_limit(update, user_id):
+        return ConversationHandler.END
+        
     topic = update.message.text
     
     try:
@@ -212,24 +253,20 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         🤝 هشتگ‌های کامیونیتی:
         #هشتگ۱ #هشتگ۲ #هشتگ۳ #هشتگ۴ #هشتگ۵
         """
-        
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         ai_reply = response.choices[0].message.content.strip()
-        
         if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
 
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'hashtags_generated_success', topic)
-            
     except Exception as e:
         log_event(user_id, 'hashtag_error', str(e))
-        logger.error(f"Hashtag generation error: {e}")
         await wait_msg.edit_text("❌ مشکلی در تولید هشتگ‌ها پیش آمد.")
 
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- 3. قابلیت جدید 2: مربی ایده‌پردازی (/coach) ---
+# --- 3. قابلیت مربی ایده‌پردازی (/coach) ---
 C_TEXT = 6
 
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -245,8 +282,12 @@ async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = str(update.effective_user.id)
-    user_idea_text = update.message.text
     
+    # ----> بررسی محدودیت روزانه قبل از اجرای درخواست <----
+    if not await check_daily_limit(update, user_id):
+        return ConversationHandler.END
+
+    user_idea_text = update.message.text
     try:
         response = supabase.table('profiles').select("*").eq('user_id', user_id).execute()
         if not response.data:
@@ -281,18 +322,14 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
         **قانون مهم:** از هیچ‌گونه علامت ستاره (*) در پاسخ استفاده نکن.
         """
-        
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
         ai_reply = response.choices[0].message.content.strip()
-        
         if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
 
         await wait_msg.edit_text(ai_reply)
         log_event(user_id, 'coach_analyzed_success')
-            
     except Exception as e:
         log_event(user_id, 'coach_error', str(e))
-        logger.error(f"Coach generation error: {e}")
         await wait_msg.edit_text("❌ مشکلی در آنالیز ایده پیش آمد.")
 
     return ConversationHandler.END
@@ -305,6 +342,10 @@ async def check_profile_before_content(update: Update, context: ContextTypes.DEF
     if not await check_services(update): return ConversationHandler.END
     user_id = str(update.effective_user.id)
     
+    # ----> بررسی محدودیت روزانه قبل از اجرای درخواست <----
+    if not await check_daily_limit(update, user_id):
+        return ConversationHandler.END
+        
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     
     try:
@@ -325,7 +366,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user_profile = context.user_data['profile']
     topic = context.user_data['topic']
     wait_msg = await update.message.reply_text("⏳ در حال ایده‌پردازی و طوفان فکری...")
-    
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
     try:
@@ -353,7 +393,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             response_format={"type": "json_object"}, 
             messages=[{"role": "user", "content": prompt_ideation}]
         )
-        
         response_data = json.loads(response.choices[0].message.content)
         ideas_json = response_data.get("ideas", [])
         
@@ -361,7 +400,6 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             raise ValueError("لیست ایده‌ها در JSON خالی است.")
 
         context.user_data['ideas'] = ideas_json
-        
         keyboard = []
         for i, idea in enumerate(ideas_json):
             button = InlineKeyboardButton(f"🎬 ساخت سناریوی ایده {i+1}", callback_data=f'expand_{i}')
@@ -374,12 +412,11 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         message_text += "کدام یک را برایت به سناریوی کامل تبدیل کنم؟"
         
         await wait_msg.edit_text(message_text, reply_markup=reply_markup)
-        log_event(str(update.effective_user.id), 'ideas_generated', topic)
+        log_event(str(update.effective_user.id), 'ideas_generated', topic) # این لاگ برای شمارش استفاده می‌شود
         return EXPAND
 
     except Exception as e:
         log_event(str(update.effective_user.id), 'ideation_error', str(e))
-        logger.error(f"Error in generate_ideas: {e}")
         await wait_msg.edit_text(f"❌ ببخشید، در مرحله ایده‌پردازی مشکلی پیش آمد.")
         return ConversationHandler.END
 
@@ -451,7 +488,6 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             
     except Exception as e:
         log_event(str(update.effective_user.id), 'expansion_error', str(e))
-        logger.error(f"Error in expand_idea: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ در نوشتن سناریوی کامل مشکلی پیش آمد.")
 
     context.user_data.clear()
@@ -462,7 +498,6 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
-    # هندلر ساخت پروفایل
     profile_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('profile', profile_start)],
         states={
@@ -474,7 +509,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')],
     )
 
-    # هندلر هشتگ ساز
     hashtag_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('hashtags', hashtag_start)],
         states={
@@ -483,7 +517,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
-    # هندلر مربی ایده
     coach_conv_handler = ConversationHandler(
         entry_points=[CommandHandler('coach', coach_start)],
         states={
@@ -492,7 +525,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action)],
     )
 
-    # هندلر تولید سناریو (باید آخرین هندلر باشد تا پیام‌های متنی عادی را بگیرد)
     content_conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, check_profile_before_content)],
         states={
@@ -507,5 +539,5 @@ if __name__ == '__main__':
     application.add_handler(coach_conv_handler)
     application.add_handler(content_conv_handler)
     
-    print("🤖 BOT DEPLOYED FULLY OPERATIONAL!")
+    print("🤖 BOT DEPLOYED WITH DAILY RATE LIMITING (5 REQUESTS/DAY)!")
     application.run_polling()
