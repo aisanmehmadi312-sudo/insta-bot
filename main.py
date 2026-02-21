@@ -63,9 +63,9 @@ def is_admin(user_id: int) -> bool:
 
 async def check_maintenance(update: Update) -> bool:
     if MAINTENANCE_MODE and not is_admin(update.effective_user.id):
-        msg = "🛠 **ربات در حال بروزرسانی است!**\n\nلطفاً کمی بعد دوباره مراجعه کنید. 🙏"
+        msg = "🛠 ربات در حال بروزرسانی است!\n\nلطفاً کمی بعد دوباره مراجعه کنید. 🙏"
         if update.callback_query: await update.callback_query.answer("ربات در حال بروزرسانی است 🛠", show_alert=True)
-        else: await update.message.reply_text(msg, parse_mode='Markdown')
+        else: await update.message.reply_text(msg)
         return True 
     return False 
 
@@ -100,7 +100,7 @@ async def check_daily_limit(update: Update, user_id: str) -> bool:
     usage_count = await get_today_usage(user_id)
     if usage_count >= DAILY_LIMIT:
         message_target = update.callback_query.message if update.callback_query else update.message
-        await message_target.reply_text(f"⚠️ **محدودیت استفاده روزانه**\n\nشما امروز به سقف مجاز خود ({DAILY_LIMIT} درخواست) رسیده‌اید. لطفاً فردا دوباره مراجعه کنید.", parse_mode='Markdown')
+        await message_target.reply_text(f"⚠️ محدودیت استفاده روزانه\n\nشما امروز به سقف مجاز خود ({DAILY_LIMIT} درخواست) رسیده‌اید. لطفاً فردا دوباره مراجعه کنید.")
         return False
     return True
 
@@ -138,7 +138,7 @@ def get_admin_keyboard():
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return
-    await update.message.reply_text("👑 **پنل مدیریت ربات**", reply_markup=get_admin_keyboard(), parse_mode='Markdown')
+    await update.message.reply_text("👑 پنل مدیریت ربات", reply_markup=get_admin_keyboard())
 
 async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global MAINTENANCE_MODE
@@ -157,28 +157,28 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             total_users = supabase.table('profiles').select("id", count="exact").execute().count or 0
             total_usage_today = await get_today_usage()
-            await query.message.reply_text(f"📊 **آمار:**\n👥 کل کاربران: {total_users}\n🔥 درخواست‌های امروز: {total_usage_today}", parse_mode='Markdown')
+            await query.message.reply_text(f"📊 آمار:\n👥 کل کاربران: {total_users}\n🔥 درخواست‌های امروز: {total_usage_today}")
         except: await query.message.reply_text("❌ خطا در آمار.")
             
     elif query.data == 'admin_monitor':
         try:
             logs = supabase.table('logs').select("user_id, event_type, content").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success']).order('created_at', desc=True).limit(5).execute().data
             if not logs: return await query.message.reply_text("📭 خالی.")
-            msg = "🕵️‍♂️ **۵ درخواست اخیر:**\n\n"
+            msg = "🕵️‍♂️ ۵ درخواست اخیر:\n\n"
             for idx, log in enumerate(logs):
                 event_name = "سناریونویس 🎬" if log['event_type'] == 'ideas_generated' else "هشتگ‌ساز 🏷" if log['event_type'] == 'hashtags_generated_success' else "مربی ایده 🧠"
-                msg += f"**{idx+1}. ابزار:** {event_name}\n👤 **آیدی:** `{log['user_id']}`\n📝 **موضوع:** {log['content']}\n──────────────\n"
-            await query.message.reply_text(msg, parse_mode='Markdown')
+                msg += f"{idx+1}. ابزار: {event_name}\n👤 آیدی: `{log['user_id']}`\n📝 موضوع: {log['content']}\n──────────────\n"
+            await query.message.reply_text(msg)
         except: await query.message.reply_text("❌ خطا در مانیتورینگ.")
 
     elif query.data == 'admin_recent_users':
         try:
             users = supabase.table('profiles').select("*").order('created_at', desc=True).limit(5).execute().data
             if not users: return await query.message.reply_text("📭 خالی.")
-            msg = "👥 **۵ کاربر اخیر:**\n\n"
+            msg = "👥 ۵ کاربر اخیر:\n\n"
             for idx, u in enumerate(users):
-                msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n💼 **کسب‌وکار:** {u['business']}\n──────────────\n"
-            await query.message.reply_text(msg, parse_mode='Markdown')
+                msg += f"{idx+1}. آیدی: `{u['user_id']}`\n💼 کسب‌وکار: {u['business']}\n──────────────\n"
+            await query.message.reply_text(msg)
         except: await query.message.reply_text("❌ خطا.")
 
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -218,19 +218,19 @@ def get_main_menu_keyboard():
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update): return 
     log_event(str(update.effective_user.id), 'opened_main_menu')
-    text = "سلام! از منوی زیر انتخاب کنید:\n*(می‌تونید ویس هم بفرستید!)*"
+    text = "سلام! از منوی زیر انتخاب کنید:\n(می‌تونید ویس هم بفرستید!)"
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
+        await update.callback_query.message.reply_text(text, reply_markup=get_main_menu_keyboard())
     else:
-        await update.message.reply_text(text, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
+        await update.message.reply_text(text, reply_markup=get_main_menu_keyboard())
 
 async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update): return 
     query = update.callback_query
     await query.answer()
     if query.data == 'menu_scenario':
-        await query.message.reply_text("🎬 فقط کافیست موضوع را تایپ یا **ویس** کنید.")
+        await query.message.reply_text("🎬 فقط کافیست موضوع را تایپ یا ویس کنید.")
     elif query.data == 'menu_quota':
         usage = await get_today_usage(str(update.effective_user.id))
         await query.message.reply_text(f"💳 مصرف امروز: {usage}/{DAILY_LIMIT}")
@@ -239,60 +239,49 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
 P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    context.user_data.clear() # پاک کردن حافظه قبلی برای شروع امن
+    context.user_data.clear() 
     msg = "۱/۴ - موضوع اصلی پیج؟"
     if update.callback_query: await update.callback_query.message.reply_text(msg)
     else: await update.message.reply_text(msg)
     return P_BUSINESS
-
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['business'] = update.message.text
     kb = [[InlineKeyboardButton("فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی", callback_data='goal_awareness')],
           [InlineKeyboardButton("آموزش", callback_data='goal_education'), InlineKeyboardButton("سرگرمی", callback_data='goal_community')]]
     await update.message.reply_text("۲/۴ - هدف اصلی؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_GOAL
-
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    # محافظ حافظه
     if 'business' not in context.user_data:
-        await query.edit_message_text("⚠️ زمان نشست تمام شده یا ربات بروزرسانی شده. لطفاً دوباره از منو /profile را بزنید.")
+        await query.edit_message_text("⚠️ زمان نشست تمام شده. لطفاً دوباره از منو /profile را بزنید.")
         return ConversationHandler.END
-        
     context.user_data['goal'] = next(btn.text for r in query.message.reply_markup.inline_keyboard for btn in r if btn.callback_data == query.data)
     await query.edit_message_text(f"✅ هدف: {context.user_data['goal']}")
     await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف؟")
     return P_AUDIENCE
-
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if 'goal' not in context.user_data: return ConversationHandler.END # محافظ
+    if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
     kb = [[InlineKeyboardButton("صمیمی", callback_data='tone_friendly'), InlineKeyboardButton("رسمی", callback_data='tone_formal')],
           [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("طنز", callback_data='tone_humorous')],
           [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
-
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    # محافظ حافظه نهایی
     if 'business' not in context.user_data or 'audience' not in context.user_data:
-        await query.edit_message_text("⚠️ خطای حافظه به دلیل آپدیت ربات. لطفاً مجدداً از منو پروفایل را بسازید.")
+        await query.edit_message_text("⚠️ خطای حافظه. لطفاً مجدداً پروفایل را بسازید.")
         return ConversationHandler.END
-        
     context.user_data['tone'] = next(btn.text for r in query.message.reply_markup.inline_keyboard for btn in r if btn.callback_data == query.data)
     await query.edit_message_text(f"✅ لحن: {context.user_data['tone']}")
     try:
         supabase.table('profiles').upsert({'user_id': str(update.effective_user.id), **context.user_data}).execute()
         await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل ذخیره شد!", reply_markup=get_main_menu_keyboard())
-    except Exception as e: 
-        logger.error(f"Save error: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره دیتابیس.")
+    except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره.")
     context.user_data.clear()
     return ConversationHandler.END
-
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query: await update.callback_query.edit_message_text("لغو شد.")
@@ -304,9 +293,9 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 H_TOPIC = 5
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    msg = "🏷 **هشتگ‌ساز!** موضوع را تایپ یا ویس کنید:"
-    if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
-    else: await update.message.reply_text(msg, parse_mode='Markdown')
+    msg = "🏷 هشتگ‌ساز! موضوع را تایپ یا ویس کنید:"
+    if update.callback_query: await update.callback_query.message.reply_text(msg)
+    else: await update.message.reply_text(msg)
     return H_TOPIC
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
@@ -315,17 +304,17 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if update.message.voice:
         topic = await process_voice_to_text(update, context)
         if not topic: return ConversationHandler.END
-        await update.message.reply_text(f"🗣 **شما:** {topic}", parse_mode='Markdown')
+        await update.message.reply_text(f"🗣 شما: {topic}")
     else: topic = update.message.text
     
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("⏳ در حال تولید هشتگ...")
         prompt = f"""
-        **شخصیت:** مدیر استراتژی محتوای سخت‌گیر ایرانی.
-        **مرحله اول (فیلتر):** آیا ({topic}) با کسب‌وکار ({prof['business']}) ارتباط تجاری دارد؟
-        **مرحله دوم (خروجی JSON):**
-        فقط یک آبجکت JSON بده.
+        شخصیت: مدیر استراتژی محتوای سخت‌گیر ایرانی.
+        مرحله اول (فیلتر): آیا ({topic}) با کسب‌وکار ({prof['business']}) ارتباط تجاری دارد؟
+        مرحله دوم (خروجی JSON):
+        فقط یک آبجکت JSON بده. بدون ستاره.
         اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار شما ارتباطی ندارد.", "hashtags_text": ""}}
         اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "hashtags_text": "🎯 پربازدید:\\n#هشتگ...\\n\\n🔬 تخصصی:\\n#هشتگ...\\n\\n🤝 کامیونیتی:\\n#هشتگ..."}}
         """
@@ -333,22 +322,22 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         response_data = json.loads(response.choices[0].message.content)
         
         if not response_data.get("is_relevant", True):
-            await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}")
+            await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
 
         hashtags_text = response_data.get("hashtags_text", "").replace('*', '')
         await wait_msg.edit_text(hashtags_text)
         log_event(uid, 'hashtags_generated_success', topic)
-    except: await update.message.reply_text("❌ خطا در تولید هشتگ یا یافتن پروفایل.")
+    except: await update.message.reply_text("❌ خطا در تولید هشتگ.")
     return ConversationHandler.END
 
 # --- مربی ایده ---
 C_TEXT = 6
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    msg = "🧠 **مربی ایده!** ایده خود را بنویسید یا ویس بفرستید:"
-    if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
-    else: await update.message.reply_text(msg, parse_mode='Markdown')
+    msg = "🧠 مربی ایده! ایده خود را بنویسید یا ویس بفرستید:"
+    if update.callback_query: await update.callback_query.message.reply_text(msg)
+    else: await update.message.reply_text(msg)
     return C_TEXT
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
@@ -357,17 +346,17 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.message.voice:
         idea = await process_voice_to_text(update, context)
         if not idea: return ConversationHandler.END
-        await update.message.reply_text(f"🗣 **ایده شما:** {idea}", parse_mode='Markdown')
+        await update.message.reply_text(f"🗣 ایده شما: {idea}")
     else: idea = update.message.text
 
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("🧐 در حال آنالیز...")
         prompt = f"""
-        **شخصیت:** مربی سخت‌گیر محتوای ایرانی.
-        **مرحله اول (فیلتر):** آیا این ایده ({idea}) با کسب‌وکار ({prof['business']}) بی‌ربط است؟
-        **مرحله دوم (خروجی JSON):**
-        فقط یک آبجکت JSON بده.
+        شخصیت: مربی سخت‌گیر محتوای ایرانی.
+        مرحله اول (فیلتر): آیا این ایده ({idea}) با کسب‌وکار ({prof['business']}) بی‌ربط است؟
+        مرحله دوم (خروجی JSON):
+        فقط یک آبجکت JSON بده. بدون ستاره.
         اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "ایده با کسب‌وکار شما ارتباطی ندارد.", "coach_text": ""}}
         اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "coach_text": "۱. نقاط قوت...\\n۲. نقاط ضعف...\\n۳. پیشنهاد اصلاحی..."}}
         """
@@ -375,17 +364,18 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         response_data = json.loads(response.choices[0].message.content)
         
         if not response_data.get("is_relevant", True):
-            await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}")
+            await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
 
         coach_text = response_data.get("coach_text", "").replace('*', '')
         await wait_msg.edit_text(coach_text)
         log_event(uid, 'coach_analyzed_success', idea)
-    except: await update.message.reply_text("❌ خطا در آنالیز یا یافتن پروفایل.")
+    except: await update.message.reply_text("❌ خطا در آنالیز.")
     return ConversationHandler.END
 
-# --- سناریو ساز ---
+# --- 🚀 سناریو ساز با پرامپت شاهکار (Hook-Story-Offer) ---
 IDEAS, EXPAND = range(7, 9)
+
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_services(update) or not await check_daily_limit(update, uid): return ConversationHandler.END
@@ -394,7 +384,7 @@ async def check_profile_before_content(update: Update, context: ContextTypes.DEF
         if update.message.voice:
             topic = await process_voice_to_text(update, context)
             if not topic: return ConversationHandler.END
-            await update.message.reply_text(f"🗣 **موضوع:** {topic}", parse_mode='Markdown')
+            await update.message.reply_text(f"🗣 موضوع: {topic}")
             context.user_data['topic'] = topic
         else: context.user_data['topic'] = update.message.text
         return await generate_ideas(update, context)
@@ -406,18 +396,40 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     prof, topic = context.user_data['profile'], context.user_data['topic']
     wait_msg = await update.message.reply_text("⏳ در حال بررسی و ایده‌پردازی...")
     try:
+        # پرامپت اصلاح شده ایده‌پردازی: تولید قلاب‌های تند و دردمحور
         prompt = f"""
-        **شخصیت:** استراتژیست سخت‌گیر ایرانی.
-        **مرحله اول (فیلتر):** بررسی کن آیا ({topic}) با ({prof['business']}) ارتباط تجاری دارد؟
-        **مرحله دوم (خروجی JSON):**
-        اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار ارتباطی ندارد.", "ideas": []}}
-        اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "ideas": [{{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}]}}
+        شخصیت: تو یک کپی‌رایتر بی‌اعصاب و حرفه‌ای اینستاگرام هستی. از جملات کلیشه‌ای متنفری.
+        
+        مرحله اول: بررسی کن آیا ({topic}) با ({prof['business']}) ارتباط تجاری دارد؟
+
+        مرحله دوم (خروجی JSON):
+        اگر بی‌ربط بود:
+        {{
+            "is_relevant": false,
+            "rejection_message": "موضوع «{topic}» با کسب‌وکار شما ارتباطی ندارد.",
+            "ideas": []
+        }}
+        
+        اگر مرتبط بود:
+        سه ایده بر اساس فرمت Hook-Story-Offer بساز.
+        مهم: «قلاب» ها (Hook) باید جنجالی، روی نقطه درد کاربر، یا غیرمنتظره باشند. 
+        لیست سیاه برای قلاب: هرگز از عبارات "آیا می‌دانستید"، "در دنیای امروز"، "شاید برای شما هم" استفاده نکن. مستقیماً به مخاطب ضربه بزن.
+        {{
+            "is_relevant": true,
+            "rejection_message": "",
+            "ideas": [
+                {{"title": "ایده ۱ (زاویه درد/مشکل)", "hook": "قلاب تند و مستقیم..."}}, 
+                {{"title": "ایده ۲ (زاویه تضاد/باور غلط)", "hook": "قلاب خلاف جریان..."}}, 
+                {{"title": "ایده ۳ (زاویه داستان شخصی)", "hook": "قلاب اعتراف یا داستان..."}}
+            ]
+        }}
         """
         res = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(res.choices[0].message.content)
         
         if not response_data.get("is_relevant", True):
-            await wait_msg.edit_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}")
+            await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
+            log_event(str(update.effective_user.id), 'topic_rejected_gatekeeper', topic)
             return ConversationHandler.END
 
         ideas = response_data.get("ideas", [])
@@ -437,20 +449,65 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     query = update.callback_query
     await query.answer()
     
-    # محافظ حافظه برای منقضی شدن نشست در این مرحله
     if 'ideas' not in context.user_data or 'profile' not in context.user_data:
         await query.edit_message_text("⚠️ زمان نشست تمام شده. لطفاً دوباره موضوع را بفرستید.")
         return ConversationHandler.END
         
     idea = context.user_data['ideas'][int(query.data.split('_')[1])]
     prof = context.user_data['profile']
-    await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریو...")
+    await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریوی حرفه‌ای...")
+    
     try:
-        prompt = f"بر اساس ایده ({idea['title']}, {idea['hook']}) و پروفایل ({prof['business']}) سناریو کامل فارسی بده. ستاره نذار."
+        # --- پرامپت شاهکار HSO ---
+        prompt = f"""
+        شخصیت تو:
+        تو یک کپی‌رایتر و فیلم‌نامه‌نویسِ بسیار حرفه‌ای و "کفِ بازاری" در ایران هستی. تو می‌دانی که در اینستاگرام، حوصله مخاطب فقط ۳ ثانیه است.
+
+        اطلاعات پایه:
+        - کسب‌وکار: {prof['business']}
+        - هدف: {prof.get('goal', 'نامشخص')}
+        - مخاطب: {prof['audience']}
+        - لحن: {prof['tone']}
+        - ایده انتخابی: (عنوان: {idea['title']}, قلاب: {idea['hook']})
+
+        لیست سیاه (هرگز استفاده نکن):
+        "آیا می‌دانستید"، "در دنیای امروز"، "شاید برای شما هم"، "راز موفقیت"، "با ما همراه باشید"، "امروزه".
+
+        دستورالعمل لحن و ریتم:
+        - جملات باید بسیار کوتاه و ضربتی باشند (نوشته شده برای "شنیده شدن" نه "خوانده شدن").
+        - از کلمات محاوره‌ای و طبیعی استفاده کن (مثل: ببین، راستش رو بخوای، خب، حالا).
+        - جاهایی که گوینده باید برای تاثیرگذاری مکث کند را با علامت [...] نشان بده.
+
+        ساختار خروجی (فقط بر اساس فرمول Hook-Story-Offer):
+        
+        🎬 نقشه ساخت ریلز: {idea['title']}
+
+        ۱. قلاب (Hook) - (۰ تا ۵ ثانیه):
+        تصویر: (یک تصویر غیرمنتظره یا مرتبط با درد مخاطب که فوراً توجه را جلب کند)
+        متن روی صفحه: (یک جمله کوتاه، خوانا و درشت)
+        نریشن: "{idea['hook']}"
+
+        ۲. داستان / پل ارتباطی (Story/Bridge) - (۵ تا ۲۰ ثانیه):
+        تصویر: (تغییر زاویه دوربین یا نمایش مشکل/راه حل)
+        نریشن: (اینجا مستقیماً سراغ فروش نرو. یک تجربه، یک حقیقت تلخ، یا دلیلِ منطقیِ پشت آن قلاب را با جملات کوتاه و محاوره‌ای بیان کن. نشان بده که مشکل مخاطب را درک می‌کنی و راه حلی وجود دارد. از مکث [...] استفاده کن.)
+
+        ۳. پیشنهاد / اقدام (Offer/CTA) - (۲۰ تا ۲۵ ثانیه):
+        تصویر: (نمایش مستقیم محصول، لوگو، یا فرد در حال اشاره به دکمه)
+        نریشن: (بدون حاشیه و کاملاً صریح به مخاطب بگو چه کار کند. این دعوت به اقدام باید دقیقاً هم‌راستا با هدف "{prof.get('goal')}" باشد.)
+
+        ---
+        کپشن پیشنهادی: (۲ خط کوتاه + دعوت به کامنت گذاشتن)
+        
+        قانون نهایی: هرگز از کاراکتر ستاره (*) در خروجی استفاده نکن.
+        """
+        
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
+        
         await context.bot.send_message(chat_id=update.effective_chat.id, text=res)
         log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
-    except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در سناریو.")
+    except Exception as e: 
+        logger.error(f"Error in expansion: {e}")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در سناریو.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -498,5 +555,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED WITH MEMORY PROTECTION!")
+    print("🤖 BOT DEPLOYED WITH THE MASTERPIECE HSO PROMPT!")
     application.run_polling()
