@@ -109,38 +109,74 @@ async def process_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TY
         if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
         return None
 
-# --- پنل ادمین ---
+# --- 👑 پنل ادمین (Admin Panel) ---
 A_BROADCAST = 10
-def is_admin(user_id: int) -> bool: return ADMIN_ID and str(user_id) == str(ADMIN_ID)
+
+def is_admin(user_id: int) -> bool: 
+    return ADMIN_ID and str(user_id) == str(ADMIN_ID)
 
 async def admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return
-    keyboard = [[InlineKeyboardButton("📊 آمار ربات", callback_data='admin_stats')], [InlineKeyboardButton("📢 پیام همگانی", callback_data='admin_broadcast_start')]]
-    await update.message.reply_text("👑 **پنل مدیریت**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    keyboard = [
+        [InlineKeyboardButton("📊 آمار کلی ربات", callback_data='admin_stats')],
+        [InlineKeyboardButton("🕵️‍♂️ ۵ درخواست اخیر کاربران", callback_data='admin_monitor')],
+        [InlineKeyboardButton("📢 ارسال پیام همگانی", callback_data='admin_broadcast_start')]
+    ]
+    await update.message.reply_text("👑 **پنل مدیریت ربات**\nلطفاً یک گزینه را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
 async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not is_admin(update.effective_user.id): return await query.answer("عدم دسترسی", show_alert=True)
     await query.answer()
+    
     if query.data == 'admin_stats':
         try:
             total_users = supabase.table('profiles').select("id", count="exact").execute().count or 0
             total_usage_today = await get_today_usage()
-            await query.message.reply_text(f"📊 **آمار:**\n👥 کاربران: {total_users}\n🔥 درخواست‌های امروز: {total_usage_today}", parse_mode='Markdown')
+            await query.message.reply_text(f"📊 **آمار زنده:**\n\n👥 کل کاربران ثبت‌نامی: {total_users} نفر\n🔥 کل درخواست‌های امروز: {total_usage_today} بار", parse_mode='Markdown')
         except Exception as e:
             await query.message.reply_text(f"❌ خطا: {e}")
+            
+    elif query.data == 'admin_monitor':
+        try:
+            # دریافت ۵ لاگ آخر مربوط به تولید محتوا
+            response = supabase.table('logs').select("user_id, event_type, content, created_at")\
+                .in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success'])\
+                .order('created_at', desc=True).limit(5).execute()
+            
+            logs = response.data
+            if not logs:
+                await query.message.reply_text("📭 هنوز هیچ درخواستی ثبت نشده است.")
+                return
+                
+            msg = "🕵️‍♂️ **۵ درخواست اخیر کاربران:**\n\n"
+            for idx, log in enumerate(logs):
+                # تبدیل اسم رویداد به زبان ساده
+                event_name = "سناریونویس 🎬"
+                if log['event_type'] == 'hashtags_generated_success': event_name = "هشتگ‌ساز 🏷"
+                elif log['event_type'] == 'coach_analyzed_success': event_name = "مربی ایده 🧠"
+                
+                msg += f"**{idx+1}. ابزار:** {event_name}\n"
+                msg += f"👤 **آیدی کاربر:** `{log['user_id']}`\n"
+                msg += f"📝 **موضوع درخواست:** {log['content']}\n"
+                msg += "──────────────\n"
+                
+            await query.message.reply_text(msg, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Admin monitor error: {e}")
+            await query.message.reply_text("❌ خطا در دریافت اطلاعات مانیتورینگ.")
 
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     if not is_admin(update.effective_user.id): return ConversationHandler.END
     await query.answer()
-    await query.message.reply_text("📢 پیام خود را تایپ کنید:")
+    await query.message.reply_text("📢 **ارسال پیام همگانی:**\nلطفاً پیامی که می‌خواهید برای همه ارسال شود را تایپ کنید.\n(برای لغو /cancel را بزنید)")
     return A_BROADCAST
 
 async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id): return ConversationHandler.END
     msg = update.message.text
-    wait_msg = await update.message.reply_text("⏳ در حال ارسال...")
+    wait_msg = await update.message.reply_text("⏳ در حال استخراج کاربران و ارسال...")
     try:
         users = supabase.table('profiles').select("user_id").execute().data
         success, fail = 0, 0
@@ -148,10 +184,11 @@ async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYP
             try:
                 await context.bot.send_message(chat_id=u['user_id'], text=msg)
                 success += 1
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1) # برای جلوگیری از اسپم شدن ربات توسط تلگرام
             except: fail += 1
-        await wait_msg.edit_text(f"✅ پایان ارسال!\nموفق: {success}\nناموفق: {fail}")
-    except: await wait_msg.edit_text("❌ خطا در دیتابیس.")
+        await wait_msg.edit_text(f"✅ **پایان ارسال!**\n\n📬 موفق: {success} نفر\n🚫 ناموفق/بلاک کرده: {fail} نفر", parse_mode='Markdown')
+        log_event(str(update.effective_user.id), 'admin_broadcast_sent', f"S: {success}, F: {fail}")
+    except: await wait_msg.edit_text("❌ خطا در ارتباط با دیتابیس.")
     return ConversationHandler.END
 
 # --- منوی اصلی ---
@@ -250,7 +287,7 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         prompt = f"بر اساس کسب‌وکار ({prof['business']}) و موضوع ({topic}) سه دسته هشتگ فارسی بده: پربازدید، تخصصی، کامیونیتی."
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         await wait_msg.edit_text(res)
-        log_event(uid, 'hashtags_generated_success')
+        log_event(uid, 'hashtags_generated_success', topic)
     except: await update.message.reply_text("❌ خطا در تولید هشتگ یا یافتن پروفایل.")
     return ConversationHandler.END
 
@@ -278,7 +315,7 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         prompt = f"به عنوان مربی، این ایده ({idea}) را برای کسب‌وکار ({prof['business']}) بررسی کن. نقاط قوت، ضعف، و نسخه اصلاح شده بده. بدون کاراکتر ستاره."
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         await wait_msg.edit_text(res)
-        log_event(uid, 'coach_analyzed_success')
+        log_event(uid, 'coach_analyzed_success', idea)
     except: await update.message.reply_text("❌ خطا در آنالیز یا یافتن پروفایل.")
     return ConversationHandler.END
 
@@ -311,7 +348,7 @@ async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         kb = [[InlineKeyboardButton(f"🎬 ساخت ایده {i+1}", callback_data=f'expand_{i}')] for i in range(len(ideas))]
         msg = f"موضوع: {topic}\n\n" + "\n".join([f"{i+1}. {x['title']}\nقلاب: {x['hook']}\n" for i, x in enumerate(ideas)])
         await wait_msg.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb))
-        log_event(str(update.effective_user.id), 'ideas_generated')
+        log_event(str(update.effective_user.id), 'ideas_generated', topic)
         return EXPAND
     except:
         await wait_msg.edit_text("❌ خطا در ایده‌پردازی.")
@@ -327,7 +364,7 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         prompt = f"بر اساس ایده ({idea['title']}, {idea['hook']}) و پروفایل ({prof['business']}) سناریو کامل فارسی بده. اگر کاملا نامربوط بود بگو نامرتبط. ستاره نذار."
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         await context.bot.send_message(chat_id=update.effective_chat.id, text=res)
-        log_event(str(update.effective_user.id), 'expansion_success')
+        log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
     except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در سناریو.")
     context.user_data.clear()
     return ConversationHandler.END
@@ -339,7 +376,9 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler(['start', 'menu'], show_main_menu))
     application.add_handler(CommandHandler('admin', admin_start))
     application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota)$'))
-    application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^admin_stats$'))
+    
+    # اضافه شدن هندلر دکمه‌های ادمین
+    application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^(admin_stats|admin_monitor)$'))
     
     application.add_handler(ConversationHandler(
         entry_points=[CallbackQueryHandler(admin_broadcast_start, pattern='^admin_broadcast_start$')],
@@ -376,5 +415,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: FINAL VERSION WITH VOICE!")
+    print("🤖 BOT DEPLOYED: LIVE MONITORING ADMIN PANEL!")
     application.run_polling()
