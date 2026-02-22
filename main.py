@@ -25,13 +25,16 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-ADMIN_ID = os.environ.get("ADMIN_ID")
+
+# --- تنظیمات ادمین و پرداخت ---
+# 🚨 بسیار مهم: عدد زیر را پاک کنید و آیدی عددی واقعی تلگرام خود را بین کوتیشن‌ها بنویسید!
+ADMIN_ID = "2084817150" 
+SUPPORT_USERNAME = "@Amir_shahosseini" # یوزرنیم شما برای پشتیبانی
 
 DAILY_LIMIT = 5
 MAINTENANCE_MODE = False
 
-# --- تنظیمات پرداخت (اختصاصی امیر) ---
-CARD_NUMBER = "6118-2800-5587-6343" # با خط تیره برای خوانایی بهتر کاربر
+CARD_NUMBER = "6118-2800-5587-6343" 
 CARD_NAME = "امیراحمد شاه حسینی"
 VIP_PRICE = "۹۹,۰۰۰ تومان" 
 
@@ -205,7 +208,10 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             for idx, log in enumerate(logs):
                 event_name = "سناریونویس 🎬" if log['event_type'] == 'ideas_generated' else "هشتگ‌ساز 🏷" if log['event_type'] == 'hashtags_generated_success' else "کاورساز 🎨" if log['event_type'] == 'dalle_generated' else "مربی ایده 🧠"
                 msg += f"**{idx+1}. ابزار:** {event_name}\n👤 **آیدی:** `{log['user_id']}`\n📝 **موضوع:** {log['content']}\n──────────────\n"
-            await query.message.reply_text(msg, parse_mode='Markdown')
+            try:
+                await query.message.reply_text(msg, parse_mode='Markdown')
+            except BadRequest:
+                await query.message.reply_text(msg) 
         except: await query.message.reply_text("❌ خطا در مانیتورینگ.")
 
     elif query.data == 'admin_recent_users':
@@ -216,7 +222,10 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             for idx, u in enumerate(users):
                 vip_status = "💎 VIP" if u.get('is_vip') else "عادی"
                 msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n💼 **کسب‌وکار:** {u['business']}\n💳 **اکانت:** {vip_status}\n──────────────\n"
-            await query.message.reply_text(msg, parse_mode='Markdown')
+            try:
+                await query.message.reply_text(msg, parse_mode='Markdown')
+            except BadRequest:
+                await query.message.reply_text(msg)
         except: await query.message.reply_text("❌ خطا.")
 
 async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -229,7 +238,7 @@ async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TY
 async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id): return ConversationHandler.END
     msg = update.message.text
-    wait_msg = await update.message.reply_text("⏳ در حال ارسال...")
+    wait_msg = await update.message.reply_text("⏳ در حال استخراج کاربران و ارسال...")
     try:
         users = supabase.table('profiles').select("user_id").execute().data
         success, fail = 0, 0
@@ -243,6 +252,49 @@ async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYP
         log_event(str(update.effective_user.id), 'admin_broadcast_sent', f"S: {success}")
     except: await wait_msg.edit_text("❌ خطا در دیتابیس.")
     return ConversationHandler.END
+
+# --- هندلر دریافت عکس (رسید پرداخت) ---
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    
+    if context.user_data.get('awaiting_receipt'):
+        if not ADMIN_ID or ADMIN_ID == "123456789":
+            await update.message.reply_text("❌ خطا: آیدی ادمین به درستی تنظیم نشده است. لطفاً با پشتیبانی تماس بگیرید.")
+            return
+            
+        user = update.effective_user
+        safe_name = str(user.first_name).replace('_', ' ').replace('*', '') if user.first_name else "کاربر"
+        safe_username = f"@{user.username}".replace('_', '\\_') if user.username else "ندارد"
+        
+        caption = (
+            "💰 **رسید پرداختی جدید!**\n\n"
+            f"👤 **نام:** {safe_name}\n"
+            f"🆔 **آیدی تلگرام:** {user_id}\n"
+            f"🔗 **یوزرنیم:** {safe_username}"
+        )
+        
+        admin_kb = [
+            [InlineKeyboardButton("✅ تایید و ارتقا به VIP", callback_data=f'verify_payment_{user_id}')],
+            [InlineKeyboardButton("❌ رد رسید", callback_data=f'reject_payment_{user_id}')]
+        ]
+        
+        try:
+            await context.bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=update.message.photo[-1].file_id,
+                caption=caption,
+                reply_markup=InlineKeyboardMarkup(admin_kb),
+                parse_mode='Markdown'
+            )
+            context.user_data['awaiting_receipt'] = False
+            await update.message.reply_text("⏳ رسید شما دریافت شد و برای مدیریت ارسال گردید. لطفاً منتظر تایید بمانید...")
+            log_event(user_id, 'receipt_sent')
+            
+        except Exception as e:
+            logger.error(f"Error sending receipt to admin: {e}")
+            await update.message.reply_text(f"❌ متاسفانه در ارسال رسید مشکلی پیش آمد. لطفاً به {SUPPORT_USERNAME} پیام دهید.")
+    else:
+        await update.message.reply_text("لطفاً برای تولید محتوا، موضوع خود را تایپ یا ویس کنید. من فعلاً قادر به پردازش عکس نیستم! 😅")
 
 # --- هندلر دکمه‌های تایید فیش توسط ادمین ---
 async def handle_payment_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -258,7 +310,7 @@ async def handle_payment_verification(update: Update, context: ContextTypes.DEFA
         try:
             supabase.table('profiles').update({'is_vip': True}).eq('user_id', target_user_id).execute()
             await query.edit_message_reply_markup(reply_markup=None)
-            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ **توسط شما تایید و کاربر VIP شد.**", parse_mode='Markdown')
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ تایید و کاربر VIP شد.")
             
             success_msg = "🎉 **تبریک! پرداخت شما تایید شد.**\n\nحساب شما به **VIP 💎** ارتقا یافت. هم‌اکنون محدودیت استفاده روزانه شما برداشته شده و می‌توانید از قابلیت بی‌نظیر تولید کاور با هوش مصنوعی (DALL-E) استفاده کنید!"
             await context.bot.send_message(chat_id=target_user_id, text=success_msg, parse_mode='Markdown')
@@ -270,9 +322,9 @@ async def handle_payment_verification(update: Update, context: ContextTypes.DEFA
             
     elif action == 'reject':
         await query.edit_message_reply_markup(reply_markup=None)
-        await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ **توسط شما رد شد.**", parse_mode='Markdown')
+        await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ این رسید توسط شما رد شد.")
         
-        reject_msg = "❌ کاربر گرامی، متاسفانه رسید ارسالی شما تایید نشد. در صورت بروز اشتباه، لطفاً مجدداً تلاش کنید یا با پشتیبانی در ارتباط باشید."
+        reject_msg = f"❌ کاربر گرامی، متاسفانه رسید ارسالی شما تایید نشد. در صورت بروز اشتباه، لطفاً با پشتیبانی ({SUPPORT_USERNAME}) در ارتباط باشید."
         await context.bot.send_message(chat_id=target_user_id, text=reject_msg)
 
 # ---------------------------------------------
@@ -334,51 +386,11 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
             f"💳 **مبلغ قابل پرداخت:** {VIP_PRICE}\n"
             f"شماره کارت: `{CARD_NUMBER}`\n"
             f"به نام: {CARD_NAME}\n\n"
-            "📸 **لطفاً پس از واریز، عکس رسید خود را در همینجا برای من ارسال کنید.**"
+            "📸 **لطفاً پس از واریز، عکس رسید خود را در همینجا برای من ارسال کنید.**\n"
+            f"پشتیبانی: {SUPPORT_USERNAME}"
         )
         context.user_data['awaiting_receipt'] = True
         await query.message.reply_text(payment_info, parse_mode='Markdown')
-
-# --- هندلر دریافت عکس (برای رسید پرداخت) ---
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    
-    if context.user_data.get('awaiting_receipt'):
-        if not ADMIN_ID:
-            await update.message.reply_text("❌ خطا: آیدی ادمین در سیستم تنظیم نشده است. امکان پردازش خرید وجود ندارد.")
-            return
-            
-        user = update.effective_user
-        username_str = f"@{user.username}" if user.username else "ندارد"
-        caption = (
-            "💰 **رسید پرداختی جدید!**\n\n"
-            f"👤 **نام:** {user.first_name}\n"
-            f"🆔 **آیدی تلگرام:** {user_id}\n"
-            f"🔗 **یوزرنیم:** {username_str}"
-        )
-        
-        admin_kb = [
-            [InlineKeyboardButton("✅ تایید و ارتقا به VIP", callback_data=f'verify_payment_{user_id}')],
-            [InlineKeyboardButton("❌ رد رسید", callback_data=f'reject_payment_{user_id}')]
-        ]
-        
-        try:
-            await context.bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=update.message.photo[-1].file_id,
-                caption=caption,
-                reply_markup=InlineKeyboardMarkup(admin_kb),
-                parse_mode='Markdown'
-            )
-            context.user_data['awaiting_receipt'] = False
-            await update.message.reply_text("⏳ رسید شما دریافت شد و برای مدیریت ارسال گردید. لطفاً منتظر تایید بمانید...")
-            log_event(user_id, 'receipt_sent')
-            
-        except Exception as e:
-            logger.error(f"Error sending receipt to admin: {e}")
-            await update.message.reply_text("❌ متاسفانه در ارسال رسید مشکلی پیش آمد.")
-    else:
-        await update.message.reply_text("لطفاً برای تولید محتوا، موضوع خود را تایپ یا ویس کنید. من فعلاً قادر به پردازش عکس نیستم! 😅")
 
 
 # --- مکالمه پروفایل ---
@@ -390,14 +402,12 @@ async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.callback_query: await update.callback_query.message.reply_text(msg)
     else: await update.message.reply_text(msg)
     return P_BUSINESS
-
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['business'] = update.message.text
     kb = [[InlineKeyboardButton("فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی", callback_data='goal_awareness')],
           [InlineKeyboardButton("آموزش", callback_data='goal_education'), InlineKeyboardButton("سرگرمی", callback_data='goal_community')]]
     await update.message.reply_text("۲/۴ - هدف اصلی؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_GOAL
-
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -408,16 +418,14 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.edit_message_text(f"✅ هدف: {context.user_data['goal']}")
     await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف؟")
     return P_AUDIENCE
-
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
-    kb = [[InlineKeyboardButton("صمیمی", callback_data='tone_friendly'), InlineKeyboardButton("رسمی", callback_data='tone_formal')],
-          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("طنز", callback_data='tone_humorous')],
-          [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
+    kb = [[InlineKeyboardButton("صمیمی و دوستانه", callback_data='tone_friendly'), InlineKeyboardButton("رسمی و معتبر", callback_data='tone_formal')],
+          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
+          [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
-
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -432,7 +440,6 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره.")
     context.user_data.clear()
     return ConversationHandler.END
-
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query: await update.callback_query.edit_message_text("لغو شد.")
@@ -684,19 +691,12 @@ async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEF
     try:
         prompt = f"""
         شخصیت: استراتژیست محتوای اینستاگرام. داستان از خودت نساز.
-        
-        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط منطقی دارد؟
-        
+        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط دارد؟
         مرحله دوم (خروجی JSON):
         اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار ارتباطی ندارد.", "ideas": []}}
-        
         اگر مرتبط بود:
         سه ایده جذاب بساز.
-        مهم:
-        - ادعای اصلی کاربر این است: "{claim}"
-        - احساس نهایی ویدیو باید این باشد: "{emotion}"
-        قلاب‌ها باید مستقیماً بر اساس "ادعای کاربر" و با "احساس درخواستی" طراحی شوند.
-        
+        مهم: ادعای کاربر: "{claim}" / احساس: "{emotion}". قلاب‌ها بر این اساس باشد.
         {{
             "is_relevant": true,
             "rejection_message": "",
@@ -750,41 +750,40 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         اطلاعات:
         - کسب‌وکار: {prof['business']}
         - هدف: {prof.get('goal', 'نامشخص')}
-        - ادعای اصلی کاربر (Core Claim): "{claim}"
-        - احساس ویدیو (Vibe): "{emotion}"
+        - ادعای کاربر: "{claim}"
+        - احساس ویدیو: "{emotion}"
         - ایده انتخابی: (عنوان: {idea['title']}, قلاب: {idea['hook']})
 
-        **قوانین بسیار سخت‌گیرانه (تخطی ممنوع):**
-        ۱. هرگز هیچ داستان شخصی، تجربه ساختگی، یا آمار دروغین از خودت نباف. 
-        ۲. بخش "بدنه/نریشن" باید فقط و فقط توضیحِ منطقی و مستقیمِ "ادعای اصلی کاربر" باشد. توضیح بده چرا این ادعا درست است.
-        ۳. لحن کلمات باید دقیقاً منعکس‌کننده احساس "{emotion}" باشد.
-        ۴. از عبارات کلیشه‌ای (آیا می‌دانستید، در دنیای امروز) استفاده نکن.
-        ۵. هرگز از کاراکتر ستاره (*) برای بولد کردن استفاده نکن.
+        قوانین:
+        ۱. دروغ نباف. 
+        ۲. بخش "بدنه" توضیح منطقیِ "ادعای کاربر" باشد. 
+        ۳. لحن کلمات منعکس‌کننده احساس "{emotion}" باشد.
+        ۴. از عبارات کلیشه‌ای استفاده نکن.
+        ۵. ستاره (*) نذار.
 
-        ساختار خروجی (فقط فارسی روان):
-        
+        ساختار خروجی:
         🎬 نقشه ساخت ریلز: {idea['title']}
-
-        ۱. قلاب (۰ تا ۵ ثانیه):
-        تصویر: (یک تصویر مرتبط)
-        متن روی صفحه: (جمله کوتاه)
+        ۱. قلاب (۰-۵ ثانیه):
+        تصویر: (مرتبط)
+        متن روی صفحه: (کوتاه)
         نریشن: "{idea['hook']}"
-
-        ۲. ارائه ارزش / دلیل (۵ تا ۲۰ ثانیه):
-        تصویر: (توضیح کوتاه تصویر)
-        نریشن: (اینجا ادعای کاربر را باز کن و دلیل آن را بگو. از [...] برای مکث استفاده کن.)
-
-        ۳. اقدام (۲۰ تا ۲۵ ثانیه):
-        تصویر: (تصویر پایانی)
-        نریشن: (یک دعوت به اقدام منطبق با هدف کاربر)
-
+        ۲. بدنه (۵-۲۰ ثانیه):
+        تصویر: (توضیح)
+        نریشن: (باز کردن ادعای کاربر با مکث [...])
+        ۳. اقدام (۲۰-۲۵ ثانیه):
+        تصویر: (پایانی)
+        نریشن: (دعوت به اقدام منطبق با هدف)
         ---
-        کپشن پیشنهادی: (۲ خط کوتاه + سوال)
+        کپشن پیشنهادی: (۲ خط + سوال)
         """
         
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=res, reply_markup=get_feedback_and_dalle_keyboard('scenario', idea['title']))
+        try:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=res, reply_markup=get_feedback_and_dalle_keyboard('scenario', idea['title']))
+        except BadRequest:
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=res)
+            
         log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
     except Exception as e: 
         logger.error(f"Error in expansion: {e}")
@@ -846,5 +845,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: SMART BANK TRANSFER WITH CUSTOM CARD ADDED!")
+    print("🤖 BOT DEPLOYED: HARDCODED ADMIN ID APPLIED!")
     application.run_polling()
