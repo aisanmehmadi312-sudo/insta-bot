@@ -63,7 +63,7 @@ def is_admin(user_id: int) -> bool:
 
 async def check_maintenance(update: Update) -> bool:
     if MAINTENANCE_MODE and not is_admin(update.effective_user.id):
-        msg = "🛠 **ربات در حال بروزرسانی است!**\n\nبرای ارتقای کیفیت خدمات، ربات برای دقایقی در حالت تعمیرات قرار دارد. لطفاً کمی بعد دوباره مراجعه کنید. 🙏"
+        msg = "🛠 **ربات در حال بروزرسانی است!**\n\nلطفاً کمی بعد دوباره مراجعه کنید. 🙏"
         if update.callback_query:
             await update.callback_query.answer("ربات در حال بروزرسانی است 🛠", show_alert=True)
         else:
@@ -90,7 +90,7 @@ async def get_today_usage(user_id: str = None) -> int:
     if not supabase: return 0
     try:
         today = datetime.now(timezone.utc).date().isoformat()
-        query = supabase.table('logs').select("id", count="exact").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success']).gte('created_at', f"{today}T00:00:00Z")
+        query = supabase.table('logs').select("id", count="exact").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'dalle_generated']).gte('created_at', f"{today}T00:00:00Z")
         if user_id: query = query.eq('user_id', user_id)
         response = query.execute()
         return response.count if response.count else 0
@@ -124,16 +124,36 @@ async def process_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TY
         if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
         return None
 
-def get_feedback_keyboard(context_name: str):
-    """تولید دکمه‌های بازخورد برای انتهای پیام‌ها"""
+# --- تابع بررسی VIP بودن کاربر ---
+async def is_user_vip(user_id: str) -> bool:
+    if not supabase: return False
+    try:
+        response = supabase.table('profiles').select('is_vip').eq('user_id', user_id).execute()
+        if response.data and 'is_vip' in response.data[0]:
+            return bool(response.data[0]['is_vip'])
+        return False
+    except Exception as e:
+        logger.error(f"Error checking VIP status: {e}")
+        return False # اگر ستون نبود یا خطا داد، عادی فرض می‌شود
+
+def get_feedback_and_dalle_keyboard(context_name: str, topic: str = "موضوع"):
+    """تولید دکمه‌های بازخورد + دکمه VIP تولید کاور"""
+    # کوتاه کردن طول topic برای جلوگیری از ارور سایز callback_data تلگرام
+    safe_topic = topic[:30] if len(topic) > 30 else topic
+    
     keyboard = [
         [
             InlineKeyboardButton("👍 عالی و مفید", callback_data=f'feedback_like_{context_name}'),
             InlineKeyboardButton("👎 جالب نبود", callback_data=f'feedback_dislike_{context_name}')
         ]
     ]
+    # دکمه ساخت کاور را فقط برای سناریوها نمایش می‌دهیم
+    if context_name == 'scenario':
+        keyboard.append([InlineKeyboardButton("🎨 تولید تصویر کاور (ویژه VIP 💎)", callback_data=f'dalle_trigger_{safe_topic}')])
+    
     return InlineKeyboardMarkup(keyboard)
 
+# ---------------------------------------------
 # --- 👑 پنل ادمین ---
 A_BROADCAST = 10
 
@@ -174,11 +194,11 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             
     elif query.data == 'admin_monitor':
         try:
-            logs = supabase.table('logs').select("user_id, event_type, content").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success']).order('created_at', desc=True).limit(5).execute().data
+            logs = supabase.table('logs').select("user_id, event_type, content").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'dalle_generated']).order('created_at', desc=True).limit(5).execute().data
             if not logs: return await query.message.reply_text("📭 خالی.")
             msg = "🕵️‍♂️ **۵ درخواست اخیر:**\n\n"
             for idx, log in enumerate(logs):
-                event_name = "سناریونویس 🎬" if log['event_type'] == 'ideas_generated' else "هشتگ‌ساز 🏷" if log['event_type'] == 'hashtags_generated_success' else "مربی ایده 🧠"
+                event_name = "سناریونویس 🎬" if log['event_type'] == 'ideas_generated' else "هشتگ‌ساز 🏷" if log['event_type'] == 'hashtags_generated_success' else "کاورساز 🎨" if log['event_type'] == 'dalle_generated' else "مربی ایده 🧠"
                 msg += f"**{idx+1}. ابزار:** {event_name}\n👤 **آیدی:** `{log['user_id']}`\n📝 **موضوع:** {log['content']}\n──────────────\n"
             await query.message.reply_text(msg, parse_mode='Markdown')
         except: await query.message.reply_text("❌ خطا در مانیتورینگ.")
@@ -189,7 +209,8 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             if not users: return await query.message.reply_text("📭 خالی.")
             msg = "👥 **۵ کاربر اخیر:**\n\n"
             for idx, u in enumerate(users):
-                msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n💼 **کسب‌وکار:** {u['business']}\n──────────────\n"
+                vip_status = "💎 VIP" if u.get('is_vip') else "عادی"
+                msg += f"**{idx+1}. آیدی:** `{u['user_id']}`\n💼 **کسب‌وکار:** {u['business']}\n💳 **اکانت:** {vip_status}\n──────────────\n"
             await query.message.reply_text(msg, parse_mode='Markdown')
         except: await query.message.reply_text("❌ خطا.")
 
@@ -245,24 +266,25 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
         await query.message.reply_text("🎬 فقط کافیست موضوع را تایپ یا **ویس** کنید.")
     elif query.data == 'menu_quota':
         usage = await get_today_usage(str(update.effective_user.id))
-        await query.message.reply_text(f"💳 مصرف امروز: {usage}/{DAILY_LIMIT}")
+        is_vip_user = await is_user_vip(str(update.effective_user.id))
+        status_text = "💎 VIP (دسترسی به کاورساز DALL-E)" if is_vip_user else "کاربر عادی"
+        await query.message.reply_text(f"💳 **وضعیت اکانت شما:**\n\n🔹 نوع اکانت: {status_text}\n🔹 مصرف امروز: {usage}/{DAILY_LIMIT}", parse_mode='Markdown')
 
 # --- مکالمه پروفایل ---
 P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
-
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     context.user_data.clear() 
-    msg = "۱/۴ - موضوع اصلی پیج؟"
+    msg = "۱/۴ - موضوع اصلی پیج شما چیست؟\n(مثال: فروش آنلاین قهوه، آموزش یوگا)"
     if update.callback_query: await update.callback_query.message.reply_text(msg)
     else: await update.message.reply_text(msg)
     return P_BUSINESS
 
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['business'] = update.message.text
-    kb = [[InlineKeyboardButton("فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی", callback_data='goal_awareness')],
+    kb = [[InlineKeyboardButton("افزایش فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی از برند", callback_data='goal_awareness')],
           [InlineKeyboardButton("آموزش", callback_data='goal_education'), InlineKeyboardButton("سرگرمی", callback_data='goal_community')]]
-    await update.message.reply_text("۲/۴ - هدف اصلی؟", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("۲/۴ - هدف اصلی شما از تولید محتوا چیست؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_GOAL
 
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -273,16 +295,16 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
     context.user_data['goal'] = next(btn.text for r in query.message.reply_markup.inline_keyboard for btn in r if btn.callback_data == query.data)
     await query.edit_message_text(f"✅ هدف: {context.user_data['goal']}")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف؟")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف شما چه کسانی هستند؟\n(مثال: دانشجویان، مادران جوان)")
     return P_AUDIENCE
 
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
-    kb = [[InlineKeyboardButton("صمیمی", callback_data='tone_friendly'), InlineKeyboardButton("رسمی", callback_data='tone_formal')],
-          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("طنز", callback_data='tone_humorous')],
-          [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
-    await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton("صمیمی و دوستانه", callback_data='tone_friendly'), InlineKeyboardButton("رسمی و معتبر", callback_data='tone_formal')],
+          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
+          [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')]]
+    await update.message.reply_text("۴/۴ - لحن برند شما کدام است؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
 
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -295,8 +317,8 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_text(f"✅ لحن: {context.user_data['tone']}")
     try:
         supabase.table('profiles').upsert({'user_id': str(update.effective_user.id), **context.user_data}).execute()
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل ذخیره شد!", reply_markup=get_main_menu_keyboard())
-    except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ پروفایل شما ذخیره شد!", reply_markup=get_main_menu_keyboard())
+    except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره دیتابیس.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -310,22 +332,89 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # --- هندلر بازخورد کاربر (Like/Dislike) ---
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data # مثلا feedback_like_scenario
+    data = query.data 
     
-    parts = data.split('_')
-    action = parts[1] # like یا dislike
-    context_type = parts[2] # scenario, coach, hashtag
+    if data.startswith('feedback_'):
+        await query.answer()
+        parts = data.split('_')
+        action = parts[1] # like یا dislike
+        context_type = parts[2] # scenario, coach, hashtag
+        log_event(str(update.effective_user.id), f"feedback_{action}", context_type)
+        
+        # وقتی رای میده، دکمه‌های رای حذف میشن ولی دکمه DALL-E (اگه بود) میمونه
+        existing_keyboard = query.message.reply_markup.inline_keyboard
+        new_keyboard = [[InlineKeyboardButton("✅ نظر شما ثبت شد. متشکریم!", callback_data='ignore')]]
+        
+        # اگر دکمه DALL-E در کیبورد قبلی بود، اون رو هم نگه دار
+        if len(existing_keyboard) > 1 and 'dalle_trigger' in existing_keyboard[1][0].callback_data:
+             new_keyboard.append(existing_keyboard[1])
+             
+        try:
+            await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
+        except Exception as e:
+            pass
+
+# ---------------------------------------------
+# --- 🎨 قابلیت ویژه: تولید تصویر با DALL-E 3 ---
+async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = str(update.effective_user.id)
+    topic = query.data.replace('dalle_trigger_', '')
     
-    # ثبت در دیتابیس
-    log_event(str(update.effective_user.id), f"feedback_{action}", context_type)
-    
-    # تغییر دکمه‌ها به یک پیام تشکر
-    thank_you_kb = [[InlineKeyboardButton("✅ نظر شما ثبت شد. متشکریم!", callback_data='ignore')]]
+    # ۱. بررسی VIP بودن کاربر
+    if not await is_user_vip(user_id):
+        await query.answer(show_alert=False) # بستن انیمیشن لودینگ
+        paywall_msg = (
+            "🌟 **قابلیت تولید کاور با هوش مصنوعی مخصوص کاربران VIP است.**\n\n"
+            "با ارتقای حساب خود، می‌توانید برای هر سناریو، یک کاور گرافیکی خیره‌کننده "
+            "طراحی کنید که بازدید ریلز شما را چند برابر می‌کند.\n\n"
+            "*(به زودی شرایط ارتقای حساب فعال می‌شود...)* 🚀"
+        )
+        await query.message.reply_text(paywall_msg, parse_mode='Markdown')
+        return
+
+    # ۲. کاربر VIP است، شروع تولید عکس
+    await query.answer("در حال آماده‌سازی بوم نقاشی... 🎨")
+    wait_msg = await query.message.reply_text("🎨 در حال طراحی و تولید تصویر با کیفیت بالا (DALL-E 3). این فرآیند ممکن است ۲۰ ثانیه طول بکشد...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
+
     try:
-        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(thank_you_kb))
+        # مرحله الف: تولید پرامپت انگلیسی با GPT-4o برای درک بهتر DALL-E
+        prompt_generator = f"""
+        Write a highly detailed, cinematic prompt for DALL-E 3 to create an Instagram Reel cover image based on this topic: "{topic}".
+        Rules:
+        1. The image MUST be 100% free of any text, letters, or words. It should just be the visual background/scene.
+        2. Make it eye-catching, vibrant, and suitable for social media.
+        3. Vertical aspect ratio style.
+        Just output the prompt directly.
+        """
+        dalle_prompt_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_generator}])
+        dalle_prompt = dalle_prompt_response.choices[0].message.content.strip()
+
+        # مرحله ب: ارسال به DALL-E 3
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=dalle_prompt,
+            size="1024x1792", # سایز عمودی و باکیفیت مخصوص گوشی
+            quality="hd",
+            n=1,
+        )
+        image_url = response.data[0].url
+
+        # ارسال عکس به کاربر
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id, 
+            photo=image_url, 
+            caption=f"🎨 **کاور پیشنهادی شما آماده است!**\n\n(این تصویر بدون متن طراحی شده تا بتوانید خودتان در اینستاگرام، متن قلاب را روی آن تایپ کنید)",
+            parse_mode='Markdown'
+        )
+        await wait_msg.delete()
+        log_event(user_id, 'dalle_generated', topic)
+
     except Exception as e:
-        logger.error(f"Error editing feedback keyboard: {e}")
+        logger.error(f"DALL-E Error: {e}")
+        await wait_msg.edit_text("❌ متاسفانه در تولید تصویر مشکلی پیش آمد. لطفاً دوباره تلاش کنید.")
+
 
 # ---------------------------------------------
 # --- هشتگ ساز ---
@@ -367,7 +456,6 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return ConversationHandler.END
 
         hashtags_text = response_data.get("hashtags_text", "").replace('*', '')
-        # اضافه کردن دکمه بازخورد
         await wait_msg.edit_text(hashtags_text, reply_markup=get_feedback_keyboard('hashtag'))
         log_event(uid, 'hashtags_generated_success', topic)
     except: await update.message.reply_text("❌ خطا در تولید هشتگ یا یافتن پروفایل.")
@@ -413,14 +501,13 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             return ConversationHandler.END
 
         coach_text = response_data.get("coach_text", "").replace('*', '')
-        # اضافه کردن دکمه بازخورد
         await wait_msg.edit_text(coach_text, reply_markup=get_feedback_keyboard('coach'))
         log_event(uid, 'coach_analyzed_success', idea)
     except: await update.message.reply_text("❌ خطا در آنالیز.")
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- سناریو ساز (۳ مرحله‌ای) ---
+# --- 🚀 سناریو ساز (۳ مرحله‌ای) ---
 C_CLAIM, C_EMOTION, EXPAND = range(7, 10)
 
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -497,7 +584,7 @@ async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEF
         prompt = f"""
         شخصیت: استراتژیست محتوای اینستاگرام. داستان از خودت نساز.
         
-        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط دارد؟
+        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط منطقی دارد؟
         
         مرحله دوم (خروجی JSON):
         اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار ارتباطی ندارد.", "ideas": []}}
@@ -505,9 +592,9 @@ async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEF
         اگر مرتبط بود:
         سه ایده جذاب بساز.
         مهم:
-        - ادعای اصلی کاربر: "{claim}"
-        - احساس نهایی: "{emotion}"
-        قلاب‌ها مستقیماً بر اساس "ادعای کاربر" و "احساس درخواستی" طراحی شوند.
+        - ادعای اصلی کاربر این است: "{claim}"
+        - احساس نهایی ویدیو باید این باشد: "{emotion}"
+        قلاب‌ها باید مستقیماً بر اساس "ادعای کاربر" و با "احساس درخواستی" طراحی شوند.
         
         {{
             "is_relevant": true,
@@ -555,32 +642,33 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     try:
         prompt = f"""
-        شخصیت: کپی‌رایتر حرفه‌ای اینستاگرام ایران. فقط بر اساس واقعیت‌های داده شده بنویس.
+        شخصیت تو: کپی‌رایتر حرفه‌ای اینستاگرام ایران. تو فقط بر اساس واقعیت‌های داده شده می‌نویسی.
 
         اطلاعات:
         - کسب‌وکار: {prof['business']}
         - هدف: {prof.get('goal', 'نامشخص')}
-        - ادعای کاربر: "{claim}"
-        - احساس ویدیو: "{emotion}"
+        - ادعای اصلی کاربر (Core Claim): "{claim}"
+        - احساس ویدیو (Vibe): "{emotion}"
         - ایده انتخابی: (عنوان: {idea['title']}, قلاب: {idea['hook']})
 
-        قوانین:
-        ۱. هیچ داستان شخصی، تجربه ساختگی، یا دروغی نباف. 
-        ۲. بخش "بدنه" باید فقط توضیح منطقیِ "ادعای اصلی کاربر" باشد. 
-        ۳. لحن کلمات منعکس‌کننده احساس "{emotion}" باشد.
-        ۴. از عبارات کلیشه‌ای (آیا می‌دانستید) استفاده نکن.
+        **قوانین بسیار سخت‌گیرانه (تخطی ممنوع):**
+        ۱. هرگز هیچ داستان شخصی، تجربه ساختگی، یا آمار دروغین از خودت نباف. 
+        ۲. بخش "بدنه/نریشن" باید فقط و فقط توضیحِ منطقی و مستقیمِ "ادعای اصلی کاربر" باشد. توضیح بده چرا این ادعا درست است.
+        ۳. لحن کلمات باید دقیقاً منعکس‌کننده احساس "{emotion}" باشد.
+        ۴. از عبارات کلیشه‌ای (آیا می‌دانستید، در دنیای امروز) استفاده نکن.
         ۵. هرگز از کاراکتر ستاره (*) برای بولد کردن استفاده نکن.
 
         ساختار خروجی (فقط فارسی روان):
+        
         🎬 نقشه ساخت ریلز: {idea['title']}
 
         ۱. قلاب (۰ تا ۵ ثانیه):
-        تصویر: (تصویر مرتبط)
+        تصویر: (یک تصویر مرتبط)
         متن روی صفحه: (جمله کوتاه)
         نریشن: "{idea['hook']}"
 
-        ۲. ارائه ارزش (۵ تا ۲۰ ثانیه):
-        تصویر: (توضیح کوتاه)
+        ۲. ارائه ارزش / دلیل (۵ تا ۲۰ ثانیه):
+        تصویر: (توضیح کوتاه تصویر)
         نریشن: (اینجا ادعای کاربر را باز کن و دلیل آن را بگو. از [...] برای مکث استفاده کن.)
 
         ۳. اقدام (۲۰ تا ۲۵ ثانیه):
@@ -593,8 +681,8 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         
-        # ارسال پیام به همراه دکمه‌های لایک و دیس‌لایک
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=res, reply_markup=get_feedback_keyboard('scenario'))
+        # در اینجا کیبورد شامل بازخورد و دکمه DALL-E (ویژه VIP) ارسال می‌شود
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=res, reply_markup=get_feedback_and_dalle_keyboard('scenario', idea['title']))
         log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
     except Exception as e: 
         logger.error(f"Error in expansion: {e}")
@@ -614,6 +702,9 @@ if __name__ == '__main__':
     
     # هندلر دکمه‌های بازخورد
     application.add_handler(CallbackQueryHandler(handle_feedback, pattern='^feedback_'))
+    
+    # هندلر دکمه تولید تصویر DALL-E
+    application.add_handler(CallbackQueryHandler(handle_dalle_trigger, pattern='^dalle_trigger_'))
     
     # هندلر ارسال پیام همگانی (ادمین)
     application.add_handler(ConversationHandler(
@@ -659,5 +750,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: USER FEEDBACK (LIKE/DISLIKE) ADDED!")
+    print("🤖 BOT DEPLOYED: DALL-E VIP FEATURE ADDED!")
     application.run_polling()
