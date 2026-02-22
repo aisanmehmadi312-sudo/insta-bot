@@ -232,7 +232,7 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
     if query.data == 'menu_scenario':
-        await query.message.reply_text("🎬 فقط کافیست موضوع را تایپ یا **ویس** کنید.")
+        await query.message.reply_text("🎬 برای شروع ساخت سناریو، فقط کافیست **موضوع** خود را تایپ یا **ویس** کنید.")
     elif query.data == 'menu_quota':
         usage = await get_today_usage(str(update.effective_user.id))
         await query.message.reply_text(f"💳 مصرف امروز: {usage}/{DAILY_LIMIT}")
@@ -246,14 +246,12 @@ async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if update.callback_query: await update.callback_query.message.reply_text(msg)
     else: await update.message.reply_text(msg)
     return P_BUSINESS
-
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['business'] = update.message.text
     kb = [[InlineKeyboardButton("فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی", callback_data='goal_awareness')],
           [InlineKeyboardButton("آموزش", callback_data='goal_education'), InlineKeyboardButton("سرگرمی", callback_data='goal_community')]]
     await update.message.reply_text("۲/۴ - هدف اصلی؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_GOAL
-
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -264,7 +262,6 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.edit_message_text(f"✅ هدف: {context.user_data['goal']}")
     await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف؟")
     return P_AUDIENCE
-
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
@@ -273,7 +270,6 @@ async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
           [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
-
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -288,7 +284,6 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره.")
     context.user_data.clear()
     return ConversationHandler.END
-
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query: await update.callback_query.edit_message_text("لغو شد.")
@@ -300,19 +295,20 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 H_TOPIC = 5
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    msg = "🏷 هشتگ‌ساز! موضوع را تایپ یا ویس کنید:"
-    if update.callback_query: await update.callback_query.message.reply_text(msg)
-    else: await update.message.reply_text(msg)
+    msg = "🏷 **هشتگ‌ساز!** موضوع را تایپ یا ویس کنید:"
+    if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
+    else: await update.message.reply_text(msg, parse_mode='Markdown')
     return H_TOPIC
-
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
+    
     if update.message.voice:
         topic = await process_voice_to_text(update, context)
         if not topic: return ConversationHandler.END
-        await update.message.reply_text(f"🗣 شما: {topic}")
+        await update.message.reply_text(f"🗣 **شما:** {topic}", parse_mode='Markdown')
     else: topic = update.message.text
+    
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("⏳ در حال تولید هشتگ...")
@@ -326,9 +322,11 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         """
         response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(response.choices[0].message.content)
+        
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
+
         hashtags_text = response_data.get("hashtags_text", "").replace('*', '')
         await wait_msg.edit_text(hashtags_text)
         log_event(uid, 'hashtags_generated_success', topic)
@@ -340,19 +338,21 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 C_TEXT = 6
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    msg = "🧠 مربی ایده! ایده خود را بنویسید یا ویس بفرستید:"
-    if update.callback_query: await update.callback_query.message.reply_text(msg)
-    else: await update.message.reply_text(msg)
+    msg = "🧠 **مربی ایده!** ایده خود را بنویسید یا ویس بفرستید:"
+    if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
+    else: await update.message.reply_text(msg, parse_mode='Markdown')
     return C_TEXT
 
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
+    
     if update.message.voice:
         idea = await process_voice_to_text(update, context)
         if not idea: return ConversationHandler.END
-        await update.message.reply_text(f"🗣 ایده شما: {idea}")
+        await update.message.reply_text(f"🗣 **ایده شما:** {idea}", parse_mode='Markdown')
     else: idea = update.message.text
+
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("🧐 در حال آنالیز...")
@@ -366,9 +366,11 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         """
         response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(response.choices[0].message.content)
+        
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
+
         coach_text = response_data.get("coach_text", "").replace('*', '')
         await wait_msg.edit_text(coach_text)
         log_event(uid, 'coach_analyzed_success', idea)
@@ -376,51 +378,129 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- سناریو ساز (ایده‌پردازی و گسترش) ---
-IDEAS, EXPAND = range(7, 9)
+# --- 🚀 سناریو ساز (۳ مرحله‌ای: موضوع -> ادعا -> احساس -> ایده -> گسترش) ---
+C_TOPIC, C_CLAIM, C_EMOTION, EXPAND = range(7, 11)
 
 async def check_profile_before_content(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_services(update) or not await check_daily_limit(update, uid): return ConversationHandler.END
     try:
-        context.user_data['profile'] = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
+        # چک میکنیم کاربر پروفایل داره یا نه
+        prof_res = supabase.table('profiles').select("*").eq('user_id', uid).execute()
+        if not prof_res.data:
+            await update.message.reply_text("❌ لطفاً ابتدا از منوی اصلی، پروفایل خود را بسازید.")
+            return ConversationHandler.END
+        
+        context.user_data['profile'] = prof_res.data[0]
+        
+        # گرفتن موضوع (متن یا ویس)
         if update.message.voice:
             topic = await process_voice_to_text(update, context)
             if not topic: return ConversationHandler.END
-            await update.message.reply_text(f"🗣 موضوع: {topic}")
-            context.user_data['topic'] = topic
-        else: context.user_data['topic'] = update.message.text
-        return await generate_ideas(update, context)
-    except:
-        await update.message.reply_text("❌ لطفاً ابتدا پروفایل خود را بسازید.")
-        return ConversationHandler.END
+            await update.message.reply_text(f"🗣 **موضوع دریافت شده:** {topic}", parse_mode='Markdown')
+        else:
+            topic = update.message.text
+            
+        context.user_data['topic'] = topic
         
-async def generate_ideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    prof, topic = context.user_data['profile'], context.user_data['topic']
-    wait_msg = await update.message.reply_text("⏳ در حال بررسی و ایده‌پردازی...")
+        # رفتن به مرحله بعد: پرسیدن ادعا
+        await update.message.reply_text(
+            "بسیار خب! برای اینکه سناریوی شما کاملاً واقعی و دور از کلیشه‌های هوش مصنوعی باشد، به دو سوال کوتاه پاسخ دهید.\n\n"
+            "**۱/۲ - دقیقاً چه حرف، ادعا یا نظر خاصی درباره این موضوع دارید؟**\n"
+            "(مثال: موافقم چون... / مخالفم چون... / راه حل من این است که...)\n\n"
+            "*(متن تایپ کنید یا ویس بفرستید)*",
+            parse_mode='Markdown'
+        )
+        return C_CLAIM
+        
+    except Exception as e:
+        logger.error(f"Error in start content: {e}")
+        await update.message.reply_text("❌ خطایی رخ داد.")
+        return ConversationHandler.END
+
+async def get_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if update.message.voice:
+        claim = await process_voice_to_text(update, context)
+        if not claim: return ConversationHandler.END
+    else:
+        claim = update.message.text
+        
+    context.user_data['claim'] = claim
+    
+    # دکمه‌های شیشه‌ای برای احساس
+    keyboard = [
+        [InlineKeyboardButton("امیدوار کننده 🌟", callback_data='emo_hope'), InlineKeyboardButton("تلنگر و هشدار ⚠️", callback_data='emo_warning')],
+        [InlineKeyboardButton("طنز و سرگرمی 😂", callback_data='emo_funny'), InlineKeyboardButton("همدلی و درک 🤝", callback_data='emo_empathy')],
+        [InlineKeyboardButton("علمی و قاطع 🧠", callback_data='emo_logical')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "**۲/۲ - دوست دارید مخاطب بعد از دیدن این ریلز چه حسی داشته باشد؟**\n"
+        "(از گزینه‌های زیر انتخاب کنید)",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    return C_EMOTION
+
+async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    # گرفتن متن دکمه احساس
+    emotion = next(btn.text for row in query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == query.data)
+    context.user_data['emotion'] = emotion
+    
+    prof = context.user_data['profile']
+    topic = context.user_data['topic']
+    claim = context.user_data['claim']
+    
+    await query.edit_message_text(f"حس انتخابی: {emotion}\n\n⏳ در حال ایده‌پردازی دقیق بر اساس نظر شما...")
+    
     try:
+        # پرامپت ایده‌پردازی با تزریق ادعا و احساس
         prompt = f"""
-        شخصیت: استراتژیست محتوای اینستاگرام.
-        مرحله اول (فیلتر): بررسی کن آیا ({topic}) با ({prof['business']}) ارتباط تجاری دارد؟
+        شخصیت: استراتژیست محتوای اینستاگرام. هیچ داستان یا تجربه شخصی از خودت نساز.
+        
+        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط منطقی دارد؟
+        
         مرحله دوم (خروجی JSON):
         اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار ارتباطی ندارد.", "ideas": []}}
-        اگر مرتبط بود: {{"is_relevant": true, "rejection_message": "", "ideas": [{{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}]}}
+        
+        اگر مرتبط بود:
+        سه ایده جذاب (عنوان و قلاب) بساز.
+        **بسیار مهم:**
+        - ادعای اصلی کاربر این است: "{claim}"
+        - احساس نهایی ویدیو باید این باشد: "{emotion}"
+        قلاب‌ها باید مستقیماً بر اساس "ادعای کاربر" و با "احساس درخواستی" طراحی شوند.
+        
+        {{
+            "is_relevant": true,
+            "rejection_message": "",
+            "ideas": [{{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}, {{"title": "...","hook": "..."}}]
+        }}
         """
         res = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(res.choices[0].message.content)
+        
         if not response_data.get("is_relevant", True):
-            await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
+            await query.message.reply_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}", parse_mode='Markdown')
+            log_event(str(update.effective_user.id), 'topic_rejected_gatekeeper', topic)
             return ConversationHandler.END
+
         ideas = response_data.get("ideas", [])
         if not ideas: raise ValueError("Empty ideas.")
+
         context.user_data['ideas'] = ideas
         kb = [[InlineKeyboardButton(f"🎬 ساخت ایده {i+1}", callback_data=f'expand_{i}')] for i in range(len(ideas))]
-        msg = f"موضوع: {topic}\n\n" + "\n".join([f"{i+1}. {x['title']}\nقلاب: {x['hook']}\n" for i, x in enumerate(ideas)])
-        await wait_msg.edit_text(msg, reply_markup=InlineKeyboardMarkup(kb))
+        msg = f"موضوع: {topic}\nادعای شما: {claim}\n\n" + "\n".join([f"{i+1}. {x['title']}\nقلاب: {x['hook']}\n" for i, x in enumerate(ideas)])
+        await query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb))
         log_event(str(update.effective_user.id), 'ideas_generated', topic)
         return EXPAND
-    except:
-        await wait_msg.edit_text("❌ خطا در ایده‌پردازی.")
+        
+    except Exception as e:
+        logger.error(f"Ideation error: {e}")
+        await query.message.reply_text("❌ خطا در ایده‌پردازی.")
         return ConversationHandler.END
 
 async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -428,66 +508,63 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await query.answer()
     
     if 'ideas' not in context.user_data or 'profile' not in context.user_data:
-        await query.edit_message_text("⚠️ زمان نشست تمام شده. لطفاً دوباره موضوع را بفرستید.")
+        await query.edit_message_text("⚠️ زمان نشست تمام شده. لطفاً دوباره از ابتدا شروع کنید.")
         return ConversationHandler.END
         
     idea = context.user_data['ideas'][int(query.data.split('_')[1])]
     prof = context.user_data['profile']
-    await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریوی طبیعی و روان...")
+    claim = context.user_data['claim']
+    emotion = context.user_data['emotion']
+    
+    await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریوی حرفه‌ای...")
     
     try:
-        # --- پرامپت جدید: ساده، متمرکز و بدون اغراق (فلسفه ۷ از ۱۰) ---
+        # پرامپت بسط ایده: بدون دروغ، بدون داستان ساختگی، متمرکز روی ادعا
         prompt = f"""
-        شخصیت تو:
-        تو یک تولیدکننده محتوای باتجربه و صمیمی در اینستاگرام ایران هستی. تو می‌دانی که ویدیوهای موفق، ساده و مستقیم هستند، نه پیچیده و اغراق‌آمیز.
+        شخصیت تو: کپی‌رایتر حرفه‌ای اینستاگرام ایران. تو فقط بر اساس واقعیت‌های داده شده می‌نویسی.
 
-        اطلاعات پایه:
+        اطلاعات:
         - کسب‌وکار: {prof['business']}
-        - هدف محتوا: {prof.get('goal', 'نامشخص')}
-        - مخاطب: {prof['audience']}
-        - لحن: {prof['tone']}
+        - هدف: {prof.get('goal', 'نامشخص')}
+        - ادعای اصلی کاربر (Core Claim): "{claim}"
+        - احساس ویدیو (Vibe): "{emotion}"
         - ایده انتخابی: (عنوان: {idea['title']}, قلاب: {idea['hook']})
 
-        قوانین بسیار مهم (لطفاً سعی نکن متن را بیش از حد ادبی یا احساسی کنی. ساده و طبیعی بنویس):
-        ۱. لیست سیاه: هرگز از عبارات "آیا می‌دانستید"، "در دنیای امروز"، "شاید برای شما هم پیش آمده"، "راز موفقیت"، "با ما همراه باشید" استفاده نکن.
-        ۲. قلاب (Hook) باید زیر ۱۰ کلمه باشد. مستقیم به اصل مطلب برو.
-        ۳. در بخش 'داستان'، از حرف‌های کلی و انگیزشی (مثل: "من سختی کشیدم، تو هم میتونی") دوری کن. داستان باید یک تجربه بسیار کوتاه و مستقیم درباره خودِ موضوع باشد.
-        ۴. مثال برای درک بهتر:
-           - متن بد (مصنوعی): "همیشه می‌گفتند تایم پست مهم است، اما من با جسارت تمام خلاف جریان شنا کردم و پیروز شدم!"
-           - متن خوب (طبیعی): "همه میگن ساعت ۸ شب پست بذار، ولی من یه ماه ساعت ۳ صبح پست گذاشتم و بازدیدم ۳ برابر شد..."
-        ۵. در بخش 'پیشنهاد/CTA'، داد نزن. خیلی راحت و منطقی از کاربر بخواه کاری را انجام دهد (مثلاً: "لینک تو بایو هست، سر بزن").
+        **قوانین بسیار سخت‌گیرانه (تخطی ممنوع):**
+        ۱. هرگز هیچ داستان شخصی، تجربه ساختگی، یا آمار دروغین از خودت نباف. 
+        ۲. بخش "بدنه/نریشن" باید فقط و فقط توضیحِ منطقی و مستقیمِ "ادعای اصلی کاربر" باشد. توضیح بده چرا این ادعا درست است.
+        ۳. لحن کلمات باید دقیقاً منعکس‌کننده احساس "{emotion}" باشد.
+        ۴. از عبارات کلیشه‌ای (آیا می‌دانستید، در دنیای امروز) استفاده نکن.
+        ۵. هرگز از کاراکتر ستاره (*) برای بولد کردن استفاده نکن.
 
-        ساختار خروجی (فقط به زبان فارسی و بدون استفاده از کاراکتر *):
+        ساختار خروجی (فقط فارسی روان):
         
         🎬 نقشه ساخت ریلز: {idea['title']}
 
         ۱. قلاب (۰ تا ۵ ثانیه):
-        تصویر: (یک تصویر ساده و مرتبط)
-        متن روی صفحه: (یک جمله کوتاه)
+        تصویر: (یک تصویر مرتبط)
+        متن روی صفحه: (جمله کوتاه)
         نریشن: "{idea['hook']}"
 
-        ۲. داستان و بدنه (۵ تا ۲۰ ثانیه):
+        ۲. ارائه ارزش / دلیل (۵ تا ۲۰ ثانیه):
         تصویر: (توضیح کوتاه تصویر)
-        نریشن: (یک توضیح یا تجربه ساده و مستقیم درباره موضوع. از کلمات محاوره‌ای مثل 'ببین'، 'راستش' استفاده کن. برای مکث از [...] استفاده کن.)
+        نریشن: (اینجا ادعای کاربر را باز کن و دلیل آن را بگو. از [...] برای مکث استفاده کن.)
 
-        ۳. پیشنهاد / اقدام (۲۰ تا ۲۵ ثانیه):
+        ۳. اقدام (۲۰ تا ۲۵ ثانیه):
         تصویر: (تصویر پایانی)
-        نریشن: (یک دعوت به اقدام ساده و متناسب با هدف کاربر)
+        نریشن: (یک دعوت به اقدام منطبق با هدف کاربر)
 
         ---
-        کپشن پیشنهادی: (۲ خط کوتاه و خودمانی + یک سوال ساده)
+        کپشن پیشنهادی: (۲ خط کوتاه + سوال)
         """
         
-        res = client.chat.completions.create(
-            model="gpt-4o", 
-            messages=[{"role": "user", "content": prompt}]
-        ).choices[0].message.content.replace('*', '')
+        res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         
         await context.bot.send_message(chat_id=update.effective_chat.id, text=res)
         log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
     except Exception as e: 
         logger.error(f"Error in expansion: {e}")
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در سناریو.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در نوشتن سناریو.")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -529,11 +606,16 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
 
+    # --- هندلر تغییر یافته سناریوساز (۳ مرحله‌ای) ---
     application.add_handler(ConversationHandler(
         entry_points=[MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, check_profile_before_content)],
-        states={EXPAND: [CallbackQueryHandler(expand_idea, pattern='^expand_')]},
+        states={
+            C_CLAIM: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, get_claim)],
+            C_EMOTION: [CallbackQueryHandler(generate_ideas_after_emotion, pattern='^emo_')],
+            EXPAND: [CallbackQueryHandler(expand_idea, pattern='^expand_')]
+        },
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: PROMPT UPDATED FOR NATURAL TONE (7/10 PHILOSOPHY)!")
+    print("🤖 BOT DEPLOYED: THE 3-STEP REALITY ENGINE IS LIVE!")
     application.run_polling()
