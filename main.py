@@ -3,6 +3,7 @@ import logging
 import threading
 import json
 import asyncio
+import base64
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -68,9 +69,11 @@ def is_admin(user_id: int) -> bool:
 
 async def check_maintenance(update: Update) -> bool:
     if MAINTENANCE_MODE and not is_admin(update.effective_user.id):
-        msg = "🛠 **ربات در حال بروزرسانی است!**\n\nلطفاً کمی بعد دوباره مراجعه کنید. 🙏"
-        if update.callback_query: await update.callback_query.answer("ربات در حال بروزرسانی است 🛠", show_alert=True)
-        else: await update.message.reply_text(msg, parse_mode='Markdown')
+        msg = "🛠 **ربات در حال بروزرسانی است!**\n\nبرای ارتقای کیفیت خدمات، ربات برای دقایقی در حالت تعمیرات قرار دارد. لطفاً کمی بعد دوباره مراجعه کنید. 🙏"
+        if update.callback_query:
+            await update.callback_query.answer("ربات در حال بروزرسانی است 🛠", show_alert=True)
+        else:
+            await update.message.reply_text(msg, parse_mode='Markdown')
         return True 
     return False 
 
@@ -93,7 +96,7 @@ async def get_today_usage(user_id: str = None) -> int:
     if not supabase: return 0
     try:
         today = datetime.now(timezone.utc).date().isoformat()
-        query = supabase.table('logs').select("id", count="exact").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'dalle_generated', 'competitor_analyzed']).gte('created_at', f"{today}T00:00:00Z")
+        query = supabase.table('logs').select("id", count="exact").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'coach_vision_success', 'dalle_generated', 'competitor_analyzed']).gte('created_at', f"{today}T00:00:00Z")
         if user_id: query = query.eq('user_id', user_id)
         response = query.execute()
         return response.count if response.count else 0
@@ -119,7 +122,7 @@ async def check_daily_limit(update: Update, user_id: str) -> bool:
         await message_target.reply_text(
             f"⚠️ **محدودیت استفاده روزانه**\n\n"
             f"شما امروز به سقف مجاز کاربران عادی ({DAILY_LIMIT} درخواست) رسیده‌اید.\n"
-            "برای استفاده نامحدود، می‌توانید حساب خود را به VIP ارتقا دهید. 💎", 
+            "برای استفاده نامحدود و دسترسی به امکانات ویژه (مثل آنالیز هوشمند کاور و تولید تصویر)، می‌توانید حساب خود را به VIP ارتقا دهید. 💎", 
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 ارتقا به VIP", callback_data='menu_upgrade_vip')]]),
             parse_mode='Markdown'
         )
@@ -144,9 +147,13 @@ async def process_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TY
         if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
         return None
 
-# --- توابع کیبورد بازخورد (حل باگ) ---
+# تابع جدید برای تبدیل عکس به Base64 برای Vision API
+def encode_image(image_path):
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
+
+# --- توابع کیبورد بازخورد ---
 def get_feedback_keyboard(context_name: str):
-    """دکمه‌های بازخورد ساده برای ابزارهایی مثل مربی، هشتگ‌ساز و تحلیل رقبا"""
     keyboard = [
         [
             InlineKeyboardButton("👍 عالی", callback_data=f'feedback_like_{context_name}'),
@@ -156,7 +163,6 @@ def get_feedback_keyboard(context_name: str):
     return InlineKeyboardMarkup(keyboard)
 
 def get_feedback_and_dalle_keyboard(context_name: str):
-    """دکمه‌های بازخورد + دکمه DALL-E برای بخش سناریوساز"""
     keyboard = [
         [
             InlineKeyboardButton("👍 عالی", callback_data=f'feedback_like_{context_name}'),
@@ -208,12 +214,12 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             
     elif query.data == 'admin_monitor':
         try:
-            logs = supabase.table('logs').select("user_id, event_type, content").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'dalle_generated', 'competitor_analyzed']).order('created_at', desc=True).limit(5).execute().data
+            logs = supabase.table('logs').select("user_id, event_type, content").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'coach_vision_success', 'dalle_generated', 'competitor_analyzed']).order('created_at', desc=True).limit(5).execute().data
             if not logs: return await query.message.reply_text("📭 خالی.")
             msg = "🕵️‍♂️ **۵ درخواست اخیر:**\n\n"
             for idx, log in enumerate(logs):
-                event_name = "سناریونویس 🎬" if log['event_type'] == 'ideas_generated' else "هشتگ‌ساز 🏷" if log['event_type'] == 'hashtags_generated_success' else "کاورساز 🎨" if log['event_type'] == 'dalle_generated' else "تحلیل رقیب 🕵️‍♂️" if log['event_type'] == 'competitor_analyzed' else "مربی ایده 🧠"
-                msg += f"**{idx+1}. ابزار:** {event_name}\n👤 **آیدی:** `{log['user_id']}`\n📝 **موضوع:** {log['content']}\n──────────────\n"
+                event_name = "سناریونویس 🎬" if log['event_type'] == 'ideas_generated' else "هشتگ‌ساز 🏷" if log['event_type'] == 'hashtags_generated_success' else "کاورساز 🎨" if log['event_type'] == 'dalle_generated' else "تحلیل رقیب 🕵️‍♂️" if log['event_type'] == 'competitor_analyzed' else "مربی ایده 🧠" if log['event_type'] == 'coach_analyzed_success' else "آنالیز کاور 👁"
+                msg += f"**{idx+1}. ابزار:** {event_name}\n👤 **آیدی:** `{log['user_id']}`\n📝 **موضوع:** {log['content'][:30]}...\n──────────────\n"
             try: await query.message.reply_text(msg, parse_mode='Markdown')
             except BadRequest: await query.message.reply_text(msg) 
         except: await query.message.reply_text("❌ خطا در مانیتورینگ.")
@@ -256,11 +262,13 @@ async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 # --- هندلر دریافت عکس (برای رسید پرداخت) ---
+# توجه: این تابع حالا فقط برای رسید پرداخت نیست، اگر در مرحله مربی نباشیم!
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
+    
     if context.user_data.get('awaiting_receipt'):
         if not ADMIN_ID or ADMIN_ID == "123456789":
-            await update.message.reply_text("❌ خطا: آیدی ادمین در سیستم تنظیم نشده است. لطفاً با پشتیبانی تماس بگیرید.")
+            await update.message.reply_text("❌ خطا: آیدی ادمین در سیستم تنظیم نشده است. امکان پردازش خرید وجود ندارد.")
             return
             
         user = update.effective_user
@@ -273,20 +281,30 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆔 **آیدی تلگرام:** {user_id}\n"
             f"🔗 **یوزرنیم:** {safe_username}"
         )
+        
         admin_kb = [
-            [InlineKeyboardButton("✅ تایید و ارتقا", callback_data=f'verify_payment_{user_id}')],
+            [InlineKeyboardButton("✅ تایید و ارتقا به VIP", callback_data=f'verify_payment_{user_id}')],
             [InlineKeyboardButton("❌ رد رسید", callback_data=f'reject_payment_{user_id}')]
         ]
+        
         try:
-            await context.bot.send_photo(chat_id=ADMIN_ID, photo=update.message.photo[-1].file_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_kb), parse_mode='Markdown')
+            await context.bot.send_photo(
+                chat_id=ADMIN_ID,
+                photo=update.message.photo[-1].file_id,
+                caption=caption,
+                reply_markup=InlineKeyboardMarkup(admin_kb),
+                parse_mode='Markdown'
+            )
             context.user_data['awaiting_receipt'] = False
             await update.message.reply_text("⏳ رسید شما دریافت شد و برای مدیریت ارسال گردید. لطفاً منتظر تایید بمانید...")
             log_event(user_id, 'receipt_sent')
+            
         except Exception as e:
             logger.error(f"Error sending receipt to admin: {e}")
             await update.message.reply_text(f"❌ متاسفانه در ارسال رسید مشکلی پیش آمد. لطفاً به {SUPPORT_USERNAME} پیام دهید.")
     else:
-        await update.message.reply_text("لطفاً برای تولید محتوا، موضوع خود را تایپ یا ویس کنید. من فعلاً قادر به پردازش عکس نیستم! 😅")
+        # اگر کاربر در هیچ مرحله خاصی نبود و عکس فرستاد
+        await update.message.reply_text("لطفاً برای تولید محتوا، موضوع خود را تایپ یا ویس کنید. (اگر می‌خواهید عکسی را آنالیز کنید، ابتدا از منو وارد بخش 🧠 مربی ایده شوید).")
 
 # --- هندلر دکمه‌های تایید فیش توسط ادمین ---
 async def handle_payment_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -304,7 +322,7 @@ async def handle_payment_verification(update: Update, context: ContextTypes.DEFA
             await query.edit_message_reply_markup(reply_markup=None)
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ تایید و کاربر VIP شد.")
             
-            success_msg = "🎉 **تبریک! پرداخت شما تایید شد.**\n\nحساب شما به **VIP 💎** ارتقا یافت. هم‌اکنون محدودیت استفاده روزانه شما برداشته شده و می‌توانید از قابلیت بی‌نظیر تولید کاور با هوش مصنوعی (DALL-E) استفاده کنید!"
+            success_msg = "🎉 **تبریک! پرداخت شما تایید شد.**\n\nحساب شما به **VIP 💎** ارتقا یافت. هم‌اکنون محدودیت استفاده روزانه شما برداشته شده و می‌توانید از قابلیت بی‌نظیر تولید کاور با هوش مصنوعی (DALL-E) و همچنین **آنالیزگر بصری کاورها** در بخش مربی ایده استفاده کنید!"
             await context.bot.send_message(chat_id=target_user_id, text=success_msg, parse_mode='Markdown')
             log_event(target_user_id, 'upgraded_to_vip_by_admin')
             
@@ -315,6 +333,7 @@ async def handle_payment_verification(update: Update, context: ContextTypes.DEFA
     elif action == 'reject':
         await query.edit_message_reply_markup(reply_markup=None)
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ این رسید توسط شما رد شد.")
+        
         reject_msg = f"❌ کاربر گرامی، متاسفانه رسید ارسالی شما تایید نشد. در صورت بروز اشتباه، لطفاً با پشتیبانی ({SUPPORT_USERNAME}) در ارتباط باشید."
         await context.bot.send_message(chat_id=target_user_id, text=reject_msg)
 
@@ -351,7 +370,7 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
     elif query.data == 'menu_quota':
         is_vip = await is_user_vip(user_id)
         if is_vip:
-            await query.message.reply_text("💎 **وضعیت اکانت شما: VIP**\n\nشما هیچ محدودیتی در استفاده از ربات ندارید و دسترسی به تولید کاور DALL-E برایتان فعال است. لذت ببرید! 🚀", parse_mode='Markdown')
+            await query.message.reply_text("💎 **وضعیت اکانت شما: VIP**\n\nشما هیچ محدودیتی در استفاده از ربات ندارید و دسترسی به تولید کاور DALL-E و آنالیزگر بصری (Vision) برایتان فعال است. لذت ببرید! 🚀", parse_mode='Markdown')
         else:
             usage = await get_today_usage(user_id)
             remaining = max(0, DAILY_LIMIT - usage)
@@ -373,7 +392,8 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
             "💎 **ارتقا به حساب ویژه (VIP)**\n\n"
             "با ارتقای حساب خود از مزایای زیر بهره‌مند می‌شوید:\n"
             "۱. ♾ حذف کامل محدودیت استفاده روزانه\n"
-            "۲. 🎨 قابلیت تولید کاور حرفه‌ای ریلز با هوش مصنوعی تصویرساز (DALL-E 3)\n\n"
+            "۲. 🎨 قابلیت تولید کاور حرفه‌ای ریلز با هوش مصنوعی تصویرساز (DALL-E 3)\n"
+            "۳. 👁 **آنالیزگر بصری:** امکان ارسال عکس کاور/پست به مربی ایده برای نقد گرافیکی تخصصی!\n\n"
             f"💳 **مبلغ قابل پرداخت:** {VIP_PRICE}\n"
             f"شماره کارت: `{CARD_NUMBER}`\n"
             f"به نام: {CARD_NAME}\n\n"
@@ -488,9 +508,9 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
-    kb = [[InlineKeyboardButton("صمیمی", callback_data='tone_friendly'), InlineKeyboardButton("رسمی", callback_data='tone_formal')],
-          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("طنز", callback_data='tone_humorous')],
-          [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
+    kb = [[InlineKeyboardButton("صمیمی و دوستانه", callback_data='tone_friendly'), InlineKeyboardButton("رسمی و معتبر", callback_data='tone_formal')],
+          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
+          [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -557,16 +577,83 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- مربی ایده ---
+# --- 👁 مربی ایده (Coach 2.0 with Vision) ---
 C_TEXT = 6
+
 async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
-    msg = "🧠 **مربی ایده!** ایده خود را بنویسید یا ویس بفرستید:"
+    msg = (
+        "🧠 **مربی ایده و آنالیزگر گرافیکی!**\n\n"
+        "۱. آیا ایده یا متنی برای ریلز نوشته‌اید؟ آن را اینجا تایپ یا ویس کنید.\n"
+        "۲. **(ویژه VIP 💎)** آیا عکسی برای کاور یا پست طراحی کرده‌اید؟ عکس را اینجا بفرستید تا آن را از نظر گرافیکی نقد کنم!"
+    )
     if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
     else: await update.message.reply_text(msg, parse_mode='Markdown')
     return C_TEXT
+
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
+    
+    # ----------------------------------------------------
+    # --- بخش جدید: پردازش عکس (Vision AI) برای VIP ---
+    # ----------------------------------------------------
+    if update.message.photo:
+        if not await is_user_vip(uid) and not is_admin(uid):
+            paywall_msg = "🔒 **قابلیت 'آنالیزگر بصری کاور' قفل است!**\n\nتحلیل گرافیکی عکس‌ها، فونت‌ها و رنگ‌بندی پست‌های شما توسط هوش مصنوعی بینایی (Vision)، ویژه کاربران VIP است. برای ارتقا از منوی اصلی اقدام کنید."
+            await update.message.reply_text(paywall_msg, parse_mode='Markdown')
+            return ConversationHandler.END
+
+        wait_msg = await update.message.reply_text("👁 در حال مشاهده و بررسی گرافیکی عکس شما...")
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        
+        try:
+            # 1. دانلود عکس از تلگرام
+            photo_file = await context.bot.get_file(update.message.photo[-1].file_id)
+            file_path = f"temp_cover_{uid}.jpg"
+            await photo_file.download_to_drive(file_path)
+            
+            # 2. تبدیل به Base64
+            base64_image = encode_image(file_path)
+            
+            # 3. ارسال به GPT-4o Vision
+            prompt = """
+            تو یک طراح ارشد گرافیک اینستاگرام و متخصص جذب مخاطب هستی. یک تصویر کاور/پست برای تو ارسال شده است.
+            آن را بر اساس این ۳ فاکتور کلیدی در اینستاگرام نقد کن (فقط فارسی روان، بدون تعارف، بدون کاراکتر ستاره *):
+            ۱. خوانایی (Readability): آیا متن‌ها تو گوشی راحت خونده میشن؟ تضاد رنگی بک‌گراند و متن چطوره؟
+            ۲. جذابیت بصری در اکسپلور (Click-through Rate): آیا در نگاه اول توجه رو جلب می‌کنه؟ خیلی شلوغه یا خوبه؟
+            ۳. پیشنهاد اصلاحی طلایی من: (دقیقاً به کاربر بگو چه المانی رو جابجا کنه یا چه رنگی رو عوض کنه تا عکسش بهتر بشه).
+            """
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }
+                ]
+            )
+            
+            ai_reply = response.choices[0].message.content.strip().replace('*', '')
+            
+            if os.path.exists(file_path): os.remove(file_path)
+            
+            await wait_msg.edit_text(ai_reply, reply_markup=get_feedback_keyboard('coach_vision'))
+            log_event(uid, 'coach_vision_success')
+            return ConversationHandler.END
+            
+        except Exception as e:
+            logger.error(f"Vision API Error: {e}")
+            await wait_msg.edit_text("❌ متاسفانه در تحلیل تصویر مشکلی پیش آمد.")
+            if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
+            return ConversationHandler.END
+            
+    # ----------------------------------------------------
+    # --- بخش قدیمی: پردازش متن/ویس (مربی عادی) ---
+    # ----------------------------------------------------
     if not await check_daily_limit(update, uid): return ConversationHandler.END
     
     if update.message.voice:
@@ -609,7 +696,7 @@ async def analyze_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     msg = (
         "🕵️‍♂️ **به ابزار مهندسی معکوس محتوا خوش آمدید!**\n\n"
         "آیا ریلز یا پستی از رقیب دیده‌اید که وایرال شده باشد؟\n"
-        "متنِ کپشن یا نریشن آن ویدیو را اینجا بفرستید (متن یا ویس). "
+        "متنِ کپشن یا نریشن آن ویدیو را اینجا بفرستید (تایپ کنید یا ویس بدهید). "
         "من فرمولِ پنهانِ آن را کشف می‌کنم و یک ایده جدید بر اساس همان فرمول، **برای کسب‌وکار خودتان** می‌سازم!"
     )
     if update.callback_query:
@@ -673,6 +760,7 @@ async def analyze_competitor(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Analyze error: {e}")
         await wait_msg.edit_text("❌ مشکلی در آنالیز پیش آمد.")
+
     return ConversationHandler.END
 
 # ---------------------------------------------
@@ -827,7 +915,7 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         نریشن: (باز کردن ادعای کاربر با مکث [...])
         ۳. اقدام (۲۰-۲۵ ثانیه):
         تصویر: (پایانی)
-        نریشن: (دعوت به اقدام)
+        نریشن: (دعوت به اقدام منطبق با هدف)
         ---
         کپشن پیشنهادی: (۲ خط + سوال)
         """
@@ -860,6 +948,7 @@ if __name__ == '__main__':
     ))
     
     application.add_handler(CallbackQueryHandler(handle_payment_verification, pattern='^(verify_payment_|reject_payment_)'))
+    # هندلر دریافت عکس حالا می‌تواند هم برای رسید پرداخت و هم برای آنالیز کاور کار کند!
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     
     application.add_handler(ConversationHandler(
@@ -881,11 +970,10 @@ if __name__ == '__main__':
 
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('coach', coach_start), CallbackQueryHandler(coach_start, pattern='^menu_coach$')],
-        states={C_TEXT: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, coach_analyze)]},
+        states={C_TEXT: [MessageHandler((filters.TEXT | filters.VOICE | filters.PHOTO) & ~filters.COMMAND, coach_analyze)]},
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
 
-    # --- هندلر تحلیل رقبا ---
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('analyze', analyze_start), CallbackQueryHandler(analyze_start, pattern='^menu_analyze$')],
         states={SPY_TEXT: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, analyze_competitor)]},
@@ -902,5 +990,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: ALL BUGS SQUASHED & COMPETITOR SPY IS FULLY ARMED!")
+    print("🤖 BOT DEPLOYED: VISION AI FOR VIP COVER COACH ACTIVATED!")
     application.run_polling()
