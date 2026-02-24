@@ -30,18 +30,18 @@ ADMIN_ID = os.environ.get("ADMIN_ID")
 
 DAILY_LIMIT = 5
 MAINTENANCE_MODE = False
-
 CARD_NUMBER = "6118-2800-5587-6343" 
 CARD_NAME = "امیراحمد شاه حسینی"
 VIP_PRICE = "۹۹,۰۰۰ تومان" 
 SUPPORT_USERNAME = "@Amir_shahosseini"
 
-# --- سرور وب ---
+# --- سرور وب (برای پینگ نگه داشتن سرورهایی مثل Heroku) ---
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is alive!")
+
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -55,13 +55,17 @@ threading.Thread(target=run_fake_server, daemon=True).start()
 # --- اتصال به سرویس‌ها ---
 client = None
 if OPENAI_API_KEY:
-    try: client = OpenAI(api_key=OPENAI_API_KEY)
-    except Exception as e: logger.error(f"OpenAI Config Error: {e}")
+    try: 
+        client = OpenAI(api_key=OPENAI_API_KEY)
+    except Exception as e: 
+        logger.error(f"OpenAI Config Error: {e}")
 
 supabase: Client = None
 if SUPABASE_URL and SUPABASE_KEY:
-    try: supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e: logger.error(f"Supabase Config Error: {e}")
+    try: 
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e: 
+        logger.error(f"Supabase Config Error: {e}")
 
 # --- توابع کمکی ---
 def is_admin(user_id: int) -> bool: 
@@ -201,7 +205,6 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer(f"تعمیرات {'روشن' if MAINTENANCE_MODE else 'خاموش'} شد.")
         await query.edit_message_reply_markup(reply_markup=get_admin_keyboard())
         return
-
     await query.answer()
     
     if query.data == 'admin_stats':
@@ -441,10 +444,8 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await context.bot.send_message(chat_id=update.effective_chat.id, text=paywall_msg, parse_mode='Markdown')
         return
-
     wait_msg = await context.bot.send_message(chat_id=update.effective_chat.id, text="🎨 در حال طراحی و تولید تصویر با کیفیت بالا (DALL-E 3). این فرآیند ممکن است ۲۰ ثانیه طول بکشد...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.UPLOAD_PHOTO)
-
     try:
         prompt_generator = f"""
         Write a highly detailed, cinematic prompt for DALL-E 3 to create an Instagram Reel cover image based on this topic: "{topic}".
@@ -456,7 +457,6 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
         """
         dalle_prompt_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_generator}])
         dalle_prompt = dalle_prompt_response.choices[0].message.content.strip()
-
         response = client.images.generate(
             model="dall-e-3",
             prompt=dalle_prompt,
@@ -465,7 +465,6 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
             n=1,
         )
         image_url = response.data[0].url
-
         await context.bot.send_photo(
             chat_id=update.effective_chat.id, 
             photo=image_url, 
@@ -474,7 +473,6 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await wait_msg.delete()
         log_event(user_id, 'dalle_generated', topic)
-
     except Exception as e:
         logger.error(f"DALL-E Error: {e}")
         await wait_msg.edit_text("❌ متاسفانه در تولید تصویر مشکلی پیش آمد.")
@@ -482,19 +480,25 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
 # ---------------------------------------------
 # --- مکالمه پروفایل ---
 P_BUSINESS, P_GOAL, P_AUDIENCE, P_TONE = range(4)
+
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     context.user_data.clear() 
     msg = "۱/۴ - موضوع اصلی پیج؟"
-    if update.callback_query: await update.callback_query.message.reply_text(msg)
-    else: await update.message.reply_text(msg)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(msg)
+    else: 
+        await update.message.reply_text(msg)
     return P_BUSINESS
+
 async def get_business(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['business'] = update.message.text
     kb = [[InlineKeyboardButton("فروش", callback_data='goal_sales'), InlineKeyboardButton("آگاهی", callback_data='goal_awareness')],
           [InlineKeyboardButton("آموزش", callback_data='goal_education'), InlineKeyboardButton("سرگرمی", callback_data='goal_community')]]
     await update.message.reply_text("۲/۴ - هدف اصلی؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_GOAL
+
 async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -505,6 +509,7 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await query.edit_message_text(f"✅ هدف: {context.user_data['goal']}")
     await context.bot.send_message(chat_id=update.effective_chat.id, text="۳/۴ - مخاطب هدف؟")
     return P_AUDIENCE
+
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
@@ -513,6 +518,7 @@ async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
           [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
+
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -527,6 +533,7 @@ async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     except: await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در ذخیره.")
     context.user_data.clear()
     return ConversationHandler.END
+
 async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     if update.callback_query: await update.callback_query.edit_message_text("لغو شد.")
@@ -536,12 +543,17 @@ async def cancel_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ---------------------------------------------
 # --- هشتگ ساز ---
 H_TOPIC = 5
+
 async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     msg = "🏷 **هشتگ‌ساز!** موضوع را تایپ یا ویس کنید:"
-    if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
-    else: await update.message.reply_text(msg, parse_mode='Markdown')
+    if update.callback_query:
+        await update.callback_query.answer() # حل مشکل فریز شدن دکمه
+        await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
+    else: 
+        await update.message.reply_text(msg, parse_mode='Markdown')
     return H_TOPIC
+
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
@@ -569,7 +581,6 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
-
         hashtags_text = response_data.get("hashtags_text", "").replace('*', '')
         await wait_msg.edit_text(hashtags_text, reply_markup=get_feedback_keyboard('hashtag'))
         log_event(uid, 'hashtags_generated_success', topic)
@@ -587,22 +598,24 @@ async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "۱. آیا ایده یا متنی برای ریلز نوشته‌اید؟ آن را اینجا تایپ یا ویس کنید.\n"
         "۲. **(ویژه VIP 💎)** آیا عکسی برای کاور یا پست طراحی کرده‌اید؟ عکس را اینجا بفرستید تا آن را از نظر گرافیکی نقد کنم!"
     )
-    if update.callback_query: await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
-    else: await update.message.reply_text(msg, parse_mode='Markdown')
+    if update.callback_query:
+        await update.callback_query.answer() # حل مشکل فریز شدن دکمه مربی ایده
+        await update.callback_query.message.reply_text(msg, parse_mode='Markdown')
+    else: 
+        await update.message.reply_text(msg, parse_mode='Markdown')
     return C_TEXT
 
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     
     # ----------------------------------------------------
-    # --- بخش جدید: پردازش عکس (Vision AI) برای VIP ---
+    # --- بخش پردازش عکس (Vision AI) برای VIP ---
     # ----------------------------------------------------
     if update.message.photo:
         if not await is_user_vip(uid) and not is_admin(uid):
             paywall_msg = "🔒 **قابلیت 'آنالیزگر بصری کاور' قفل است!**\n\nتحلیل گرافیکی عکس‌ها، فونت‌ها و رنگ‌بندی پست‌های شما توسط هوش مصنوعی بینایی (Vision)، ویژه کاربران VIP است. برای ارتقا از منوی اصلی اقدام کنید."
             await update.message.reply_text(paywall_msg, parse_mode='Markdown')
             return ConversationHandler.END
-
         wait_msg = await update.message.reply_text("👁 در حال مشاهده و بررسی گرافیکی عکس شما...")
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
         
@@ -652,7 +665,7 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             return ConversationHandler.END
             
     # ----------------------------------------------------
-    # --- بخش قدیمی: پردازش متن/ویس (مربی عادی) ---
+    # --- بخش پردازش متن/ویس (مربی عادی) ---
     # ----------------------------------------------------
     if not await check_daily_limit(update, uid): return ConversationHandler.END
     
@@ -661,7 +674,6 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if not idea: return ConversationHandler.END
         await update.message.reply_text(f"🗣 **ایده شما:** {idea}", parse_mode='Markdown')
     else: idea = update.message.text
-
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("🧐 در حال آنالیز...")
@@ -679,7 +691,6 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
-
         coach_text = response_data.get("coach_text", "").replace('*', '')
         await wait_msg.edit_text(coach_text, reply_markup=get_feedback_keyboard('coach'))
         log_event(uid, 'coach_analyzed_success', idea)
@@ -689,6 +700,7 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 # ---------------------------------------------
 # --- 🕵️‍♂️ تحلیلگر رقبا (Competitor Spy) ---
 SPY_TEXT = 11
+
 async def analyze_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     log_event(str(update.effective_user.id), 'analyze_start')
@@ -716,7 +728,6 @@ async def analyze_competitor(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"🗣 **متن دریافتی:** {competitor_text}", parse_mode='Markdown')
     else: 
         competitor_text = update.message.text
-
     try:
         response = supabase.table('profiles').select("*").eq('user_id', uid).execute()
         if not response.data:
@@ -726,21 +737,16 @@ async def analyze_competitor(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await update.message.reply_text("❌ خطا در خواندن اطلاعات از دیتابیس.")
         return ConversationHandler.END
-
     wait_msg = await update.message.reply_text("🕵️‍♂️ در حال کالبدشکافی و مهندسی معکوسِ محتوای رقیب...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-
     try:
         prompt = f"""
         شخصیت: کپی‌رایتر فوق‌حرفه‌ای و هکرِ رشد در اینستاگرام ایران.
         ماموریت: متن یک ریلز موفق را کالبدشکافی کن و یک ایده جدید برای کسب‌وکار کاربر بساز.
-
         اطلاعات کسب‌وکار کاربر:
         - کسب‌وکار: {user_profile['business']}
         - لحن: {user_profile['tone']}
-
         متن محتوای رقیب: "{competitor_text}"
-
         ساختار پاسخ (فقط فارسی روان، بدون ستاره):
         🔍 تحلیل مهندسی معکوس:
         ۱. قلاب مخفی (این متن روی چه نقطه دردی دست گذاشته؟)
@@ -760,7 +766,6 @@ async def analyze_competitor(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Analyze error: {e}")
         await wait_msg.edit_text("❌ مشکلی در آنالیز پیش آمد.")
-
     return ConversationHandler.END
 
 # ---------------------------------------------
@@ -858,10 +863,8 @@ async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEF
             await query.message.reply_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}", parse_mode='Markdown')
             log_event(str(update.effective_user.id), 'topic_rejected_gatekeeper', topic)
             return ConversationHandler.END
-
         ideas = response_data.get("ideas", [])
         if not ideas: raise ValueError("Empty ideas.")
-
         context.user_data['ideas'] = ideas
         kb = [[InlineKeyboardButton(f"🎬 ساخت ایده {i+1}", callback_data=f'expand_{i}')] for i in range(len(ideas))]
         msg = f"موضوع: {topic}\nادعای شما: {claim}\n\n" + "\n".join([f"{i+1}. {x['title']}\nقلاب: {x['hook']}\n" for i, x in enumerate(ideas)])
@@ -900,10 +903,8 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         - ادعای کاربر: "{claim}"
         - احساس ویدیو: "{emotion}"
         - ایده انتخابی: (عنوان: {idea['title']}, قلاب: {idea['hook']})
-
         قوانین:
         ۱. دروغ نباف. ۲. بخش "بدنه" توضیح منطقیِ "ادعای کاربر" باشد. ۳. لحن کلمات منعکس‌کننده احساس "{emotion}" باشد. ۴. از عبارات کلیشه‌ای استفاده نکن. ۵. ستاره (*) نذار.
-
         ساختار خروجی:
         🎬 نقشه ساخت ریلز: {idea['title']}
         ۱. قلاب (۰-۵ ثانیه):
@@ -961,25 +962,25 @@ if __name__ == '__main__':
         },
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
-
+    
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('hashtags', hashtag_start), CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$')],
         states={H_TOPIC: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, hashtag_generate)]},
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
-
+    
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('coach', coach_start), CallbackQueryHandler(coach_start, pattern='^menu_coach$')],
         states={C_TEXT: [MessageHandler((filters.TEXT | filters.VOICE | filters.PHOTO) & ~filters.COMMAND, coach_analyze)]},
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
-
+    
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('analyze', analyze_start), CallbackQueryHandler(analyze_start, pattern='^menu_analyze$')],
         states={SPY_TEXT: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, analyze_competitor)]},
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
-
+    
     application.add_handler(ConversationHandler(
         entry_points=[MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, check_profile_before_content)],
         states={
