@@ -930,28 +930,21 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     
     return ConversationHandler.END
 
-# --- اجرای ربات ---
+# --- بخش پایانی کد: اجرای ربات با ترتیب اصلاح شده ---
+
 if __name__ == '__main__':
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
+    # ۱. هندلرهای پایه و ادمین
     application.add_handler(CommandHandler(['start', 'menu'], show_main_menu))
     application.add_handler(CommandHandler('admin', admin_start))
     application.add_handler(CallbackQueryHandler(handle_main_menu_buttons, pattern='^(menu_scenario|menu_quota|menu_upgrade_vip)$'))
     application.add_handler(CallbackQueryHandler(handle_admin_buttons, pattern='^(admin_stats|admin_monitor|admin_recent_users|admin_toggle_maintenance)$'))
-    
     application.add_handler(CallbackQueryHandler(handle_feedback, pattern='^feedback_'))
     application.add_handler(CallbackQueryHandler(handle_dalle_trigger, pattern='^dalle_trigger_request$'))
-    
-    application.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(admin_broadcast_start, pattern='^admin_broadcast_start$')],
-        states={A_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_broadcast_send)]},
-        fallbacks=[CommandHandler('cancel', cancel_action)]
-    ))
-    
     application.add_handler(CallbackQueryHandler(handle_payment_verification, pattern='^(verify_payment_|reject_payment_)'))
-    # هندلر دریافت عکس حالا می‌تواند هم برای رسید پرداخت و هم برای آنالیز کاور کار کند!
-    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    
+
+    # ۲. ثبت نام (Profile)
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('profile', profile_start), CallbackQueryHandler(profile_start, pattern='^menu_profile$')],
         states={
@@ -962,16 +955,18 @@ if __name__ == '__main__':
         },
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
-    
-    application.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('hashtags', hashtag_start), CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$')],
-        states={H_TOPIC: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, hashtag_generate)]},
-        fallbacks=[CommandHandler('cancel', cancel_action)]
-    ))
-    
+
+    # ۳. مربی ایده (Coach) - حالا عکس‌ها ابتدا به اینجا می‌آیند
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('coach', coach_start), CallbackQueryHandler(coach_start, pattern='^menu_coach$')],
         states={C_TEXT: [MessageHandler((filters.TEXT | filters.VOICE | filters.PHOTO) & ~filters.COMMAND, coach_analyze)]},
+        fallbacks=[CommandHandler('cancel', cancel_action)]
+    ))
+
+    # ۴. سایر ابزارها (هشتگ و تحلیل رقیب)
+    application.add_handler(ConversationHandler(
+        entry_points=[CommandHandler('hashtags', hashtag_start), CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$')],
+        states={H_TOPIC: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, hashtag_generate)]},
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
     
@@ -980,7 +975,8 @@ if __name__ == '__main__':
         states={SPY_TEXT: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, analyze_competitor)]},
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
-    
+
+    # ۵. سناریوساز (Gateway)
     application.add_handler(ConversationHandler(
         entry_points=[MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, check_profile_before_content)],
         states={
@@ -990,6 +986,10 @@ if __name__ == '__main__':
         },
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
+
+    # ۶. هندلر عمومی عکس (فقط برای فیش واریزی - آخرین اولویت)
+    application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     
-    print("🤖 BOT DEPLOYED: VISION AI FOR VIP COVER COACH ACTIVATED!")
+    print("🚀 BOT DEPLOYED SUCCESSFULLY WITH RE-ORDERED HANDLERS!")
     application.run_polling()
+        
