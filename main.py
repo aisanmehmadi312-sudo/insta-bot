@@ -144,15 +144,26 @@ async def process_voice_to_text(update: Update, context: ContextTypes.DEFAULT_TY
         if 'file_path' in locals() and os.path.exists(file_path): os.remove(file_path)
         return None
 
-def get_feedback_and_dalle_keyboard(context_name: str):
+# --- توابع کیبورد بازخورد (حل باگ) ---
+def get_feedback_keyboard(context_name: str):
+    """دکمه‌های بازخورد ساده برای ابزارهایی مثل مربی، هشتگ‌ساز و تحلیل رقبا"""
     keyboard = [
         [
             InlineKeyboardButton("👍 عالی", callback_data=f'feedback_like_{context_name}'),
             InlineKeyboardButton("👎 جالب نبود", callback_data=f'feedback_dislike_{context_name}')
         ]
     ]
-    if context_name == 'scenario':
-        keyboard.append([InlineKeyboardButton("🎨 تولید تصویر کاور (ویژه VIP 💎)", callback_data='dalle_trigger_request')])
+    return InlineKeyboardMarkup(keyboard)
+
+def get_feedback_and_dalle_keyboard(context_name: str):
+    """دکمه‌های بازخورد + دکمه DALL-E برای بخش سناریوساز"""
+    keyboard = [
+        [
+            InlineKeyboardButton("👍 عالی", callback_data=f'feedback_like_{context_name}'),
+            InlineKeyboardButton("👎 جالب نبود", callback_data=f'feedback_dislike_{context_name}')
+        ],
+        [InlineKeyboardButton("🎨 تولید تصویر کاور (ویژه VIP 💎)", callback_data='dalle_trigger_request')]
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 # ---------------------------------------------
@@ -229,7 +240,7 @@ async def admin_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TY
 async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not is_admin(update.effective_user.id): return ConversationHandler.END
     msg = update.message.text
-    wait_msg = await update.message.reply_text("⏳ در حال ارسال...")
+    wait_msg = await update.message.reply_text("⏳ در حال استخراج کاربران و ارسال...")
     try:
         users = supabase.table('profiles').select("user_id").execute().data
         success, fail = 0, 0
@@ -244,18 +255,28 @@ async def admin_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYP
     except: await wait_msg.edit_text("❌ خطا در دیتابیس.")
     return ConversationHandler.END
 
-# --- هندلر عکس (رسید پرداخت) ---
+# --- هندلر دریافت عکس (برای رسید پرداخت) ---
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if context.user_data.get('awaiting_receipt'):
         if not ADMIN_ID or ADMIN_ID == "123456789":
-            await update.message.reply_text("❌ خطا: آیدی ادمین در سیستم تنظیم نشده است.")
+            await update.message.reply_text("❌ خطا: آیدی ادمین در سیستم تنظیم نشده است. لطفاً با پشتیبانی تماس بگیرید.")
             return
+            
         user = update.effective_user
         safe_name = str(user.first_name).replace('_', ' ').replace('*', '') if user.first_name else "کاربر"
         safe_username = f"@{user.username}".replace('_', '\\_') if user.username else "ندارد"
-        caption = f"💰 **رسید پرداختی جدید!**\n\n👤 **نام:** {safe_name}\n🆔 **آیدی تلگرام:** {user_id}\n🔗 **یوزرنیم:** {safe_username}"
-        admin_kb = [[InlineKeyboardButton("✅ تایید و ارتقا", callback_data=f'verify_payment_{user_id}')], [InlineKeyboardButton("❌ رد رسید", callback_data=f'reject_payment_{user_id}')]]
+        
+        caption = (
+            "💰 **رسید پرداختی جدید!**\n\n"
+            f"👤 **نام:** {safe_name}\n"
+            f"🆔 **آیدی تلگرام:** {user_id}\n"
+            f"🔗 **یوزرنیم:** {safe_username}"
+        )
+        admin_kb = [
+            [InlineKeyboardButton("✅ تایید و ارتقا", callback_data=f'verify_payment_{user_id}')],
+            [InlineKeyboardButton("❌ رد رسید", callback_data=f'reject_payment_{user_id}')]
+        ]
         try:
             await context.bot.send_photo(chat_id=ADMIN_ID, photo=update.message.photo[-1].file_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_kb), parse_mode='Markdown')
             context.user_data['awaiting_receipt'] = False
@@ -263,14 +284,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_event(user_id, 'receipt_sent')
         except Exception as e:
             logger.error(f"Error sending receipt to admin: {e}")
-            await update.message.reply_text(f"❌ متاسفانه در ارسال رسید مشکلی پیش آمد.")
+            await update.message.reply_text(f"❌ متاسفانه در ارسال رسید مشکلی پیش آمد. لطفاً به {SUPPORT_USERNAME} پیام دهید.")
     else:
         await update.message.reply_text("لطفاً برای تولید محتوا، موضوع خود را تایپ یا ویس کنید. من فعلاً قادر به پردازش عکس نیستم! 😅")
 
-# --- تایید فیش توسط ادمین ---
+# --- هندلر دکمه‌های تایید فیش توسط ادمین ---
 async def handle_payment_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not is_admin(update.effective_user.id): return await query.answer("شما ادمین نیستید!", show_alert=True)
+    
     data = query.data
     parts = data.split('_')
     action = parts[0] 
@@ -281,22 +303,26 @@ async def handle_payment_verification(update: Update, context: ContextTypes.DEFA
             supabase.table('profiles').update({'is_vip': True}).eq('user_id', target_user_id).execute()
             await query.edit_message_reply_markup(reply_markup=None)
             await query.edit_message_caption(caption=f"{query.message.caption}\n\n✅ تایید و کاربر VIP شد.")
+            
             success_msg = "🎉 **تبریک! پرداخت شما تایید شد.**\n\nحساب شما به **VIP 💎** ارتقا یافت. هم‌اکنون محدودیت استفاده روزانه شما برداشته شده و می‌توانید از قابلیت بی‌نظیر تولید کاور با هوش مصنوعی (DALL-E) استفاده کنید!"
             await context.bot.send_message(chat_id=target_user_id, text=success_msg, parse_mode='Markdown')
             log_event(target_user_id, 'upgraded_to_vip_by_admin')
+            
         except Exception as e:
+            logger.error(f"Error upgrading user: {e}")
             await query.answer("❌ خطا در آپدیت دیتابیس!", show_alert=True)
+            
     elif action == 'reject':
         await query.edit_message_reply_markup(reply_markup=None)
         await query.edit_message_caption(caption=f"{query.message.caption}\n\n❌ این رسید توسط شما رد شد.")
-        reject_msg = f"❌ کاربر گرامی، متاسفانه رسید ارسالی شما تایید نشد. در صورت بروز اشتباه، لطفاً با پشتیبانی در ارتباط باشید."
+        reject_msg = f"❌ کاربر گرامی، متاسفانه رسید ارسالی شما تایید نشد. در صورت بروز اشتباه، لطفاً با پشتیبانی ({SUPPORT_USERNAME}) در ارتباط باشید."
         await context.bot.send_message(chat_id=target_user_id, text=reject_msg)
 
 # ---------------------------------------------
 # --- منوی اصلی ---
 def get_main_menu_keyboard():
     keyboard = [
-        [InlineKeyboardButton("🎬 سناریونویس", callback_data='menu_scenario'), InlineKeyboardButton("🕵️‍♂️ تحلیل رقبا", callback_data='menu_analyze')],
+        [InlineKeyboardButton("🎬 ایده‌پرداز و سناریو", callback_data='menu_scenario'), InlineKeyboardButton("🕵️‍♂️ تحلیل رقبا", callback_data='menu_analyze')],
         [InlineKeyboardButton("🏷 هشتگ‌ساز", callback_data='menu_hashtags'), InlineKeyboardButton("🧠 مربی ایده", callback_data='menu_coach')],
         [InlineKeyboardButton("👤 پروفایل", callback_data='menu_profile'), InlineKeyboardButton("💳 اعتبار", callback_data='menu_quota')],
         [InlineKeyboardButton("💎 ارتقا به VIP", callback_data='menu_upgrade_vip')]
@@ -347,7 +373,7 @@ async def handle_main_menu_buttons(update: Update, context: ContextTypes.DEFAULT
             "💎 **ارتقا به حساب ویژه (VIP)**\n\n"
             "با ارتقای حساب خود از مزایای زیر بهره‌مند می‌شوید:\n"
             "۱. ♾ حذف کامل محدودیت استفاده روزانه\n"
-            "۲. 🎨 قابلیت تولید کاور حرفه‌ای ریلز با هوش مصنوعی (DALL-E 3)\n\n"
+            "۲. 🎨 قابلیت تولید کاور حرفه‌ای ریلز با هوش مصنوعی تصویرساز (DALL-E 3)\n\n"
             f"💳 **مبلغ قابل پرداخت:** {VIP_PRICE}\n"
             f"شماره کارت: `{CARD_NUMBER}`\n"
             f"به نام: {CARD_NAME}\n\n"
@@ -377,7 +403,8 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              
         try:
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
-        except Exception as e: pass
+        except Exception as e:
+            pass
 
 # --- 🎨 قابلیت ویژه: تولید تصویر با DALL-E 3 ---
 async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -387,8 +414,12 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
     topic = context.user_data.get('dalle_topic', 'یک صحنه مرتبط با موضوع')
     
     if not await is_user_vip(user_id):
-        paywall_msg = "🌟 این قابلیت مخصوص کاربران VIP است. برای ارتقا، از منوی اصلی روی دکمه «💎 ارتقا به VIP» کلیک کنید."
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=paywall_msg)
+        paywall_msg = (
+            "🌟 **قابلیت تولید کاور با هوش مصنوعی مخصوص کاربران VIP است.**\n\n"
+            "با ارتقای حساب خود، می‌توانید برای هر سناریو، یک کاور گرافیکی خیره‌کننده طراحی کنید.\n"
+            "برای ارتقا، از منوی اصلی روی دکمه «💎 ارتقا به VIP» کلیک کنید."
+        )
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=paywall_msg, parse_mode='Markdown')
         return
 
     wait_msg = await context.bot.send_message(chat_id=update.effective_chat.id, text="🎨 در حال طراحی و تولید تصویر با کیفیت بالا (DALL-E 3). این فرآیند ممکن است ۲۰ ثانیه طول بکشد...")
@@ -406,10 +437,21 @@ async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYP
         dalle_prompt_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_generator}])
         dalle_prompt = dalle_prompt_response.choices[0].message.content.strip()
 
-        response = client.images.generate(model="dall-e-3", prompt=dalle_prompt, size="1024x1792", quality="hd", n=1)
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=dalle_prompt,
+            size="1024x1792", 
+            quality="hd",
+            n=1,
+        )
         image_url = response.data[0].url
 
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image_url, caption=f"🎨 کاور پیشنهادی شما آماده است!")
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id, 
+            photo=image_url, 
+            caption=f"🎨 **کاور پیشنهادی شما آماده است!**\n\n(این تصویر بدون متن طراحی شده تا بتوانید خودتان در اینستاگرام، متن قلاب را روی آن تایپ کنید)",
+            parse_mode='Markdown'
+        )
         await wait_msg.delete()
         log_event(user_id, 'dalle_generated', topic)
 
@@ -446,9 +488,9 @@ async def get_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_audience(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if 'goal' not in context.user_data: return ConversationHandler.END
     context.user_data['audience'] = update.message.text
-    kb = [[InlineKeyboardButton("صمیمی و دوستانه", callback_data='tone_friendly'), InlineKeyboardButton("رسمی و معتبر", callback_data='tone_formal')],
-          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("شوخ و طنز", callback_data='tone_humorous')],
-          [InlineKeyboardButton("آموزشی و تخصصی", callback_data='tone_educational')]]
+    kb = [[InlineKeyboardButton("صمیمی", callback_data='tone_friendly'), InlineKeyboardButton("رسمی", callback_data='tone_formal')],
+          [InlineKeyboardButton("انرژی‌بخش", callback_data='tone_energetic'), InlineKeyboardButton("طنز", callback_data='tone_humorous')],
+          [InlineKeyboardButton("آموزشی", callback_data='tone_educational')]]
     await update.message.reply_text("۴/۴ - لحن برند؟", reply_markup=InlineKeyboardMarkup(kb))
     return P_TONE
 async def get_tone_and_save(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -483,11 +525,13 @@ async def hashtag_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
+    
     if update.message.voice:
         topic = await process_voice_to_text(update, context)
         if not topic: return ConversationHandler.END
         await update.message.reply_text(f"🗣 **شما:** {topic}", parse_mode='Markdown')
     else: topic = update.message.text
+    
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("⏳ در حال تولید هشتگ...")
@@ -501,9 +545,11 @@ async def hashtag_generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         """
         response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(response.choices[0].message.content)
+        
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
+
         hashtags_text = response_data.get("hashtags_text", "").replace('*', '')
         await wait_msg.edit_text(hashtags_text, reply_markup=get_feedback_keyboard('hashtag'))
         log_event(uid, 'hashtags_generated_success', topic)
@@ -522,11 +568,13 @@ async def coach_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
+    
     if update.message.voice:
         idea = await process_voice_to_text(update, context)
         if not idea: return ConversationHandler.END
         await update.message.reply_text(f"🗣 **ایده شما:** {idea}", parse_mode='Markdown')
     else: idea = update.message.text
+
     try:
         prof = supabase.table('profiles').select("*").eq('user_id', uid).execute().data[0]
         wait_msg = await update.message.reply_text("🧐 در حال آنالیز...")
@@ -540,9 +588,11 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         """
         response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(response.choices[0].message.content)
+        
         if not response_data.get("is_relevant", True):
             await wait_msg.edit_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
             return ConversationHandler.END
+
         coach_text = response_data.get("coach_text", "").replace('*', '')
         await wait_msg.edit_text(coach_text, reply_markup=get_feedback_keyboard('coach'))
         log_event(uid, 'coach_analyzed_success', idea)
@@ -550,18 +600,17 @@ async def coach_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     return ConversationHandler.END
 
 # ---------------------------------------------
-# --- 🕵️‍♂️ قابلیت جدید: تحلیلگر رقبا (Competitor Spy) ---
+# --- 🕵️‍♂️ تحلیلگر رقبا (Competitor Spy) ---
 SPY_TEXT = 11
-
 async def analyze_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_services(update): return ConversationHandler.END
     log_event(str(update.effective_user.id), 'analyze_start')
     
     msg = (
-        "🕵️‍♂️ **به ابزار مهندسی معکوس محتوا (تحلیل رقبا) خوش آمدید!**\n\n"
+        "🕵️‍♂️ **به ابزار مهندسی معکوس محتوا خوش آمدید!**\n\n"
         "آیا ریلز یا پستی از رقیب دیده‌اید که وایرال شده باشد؟\n"
-        "متنِ کپشن یا نریشن (صحبت‌های) آن ویدیو را اینجا بفرستید (تایپ کنید یا ویس بدهید). "
-        "من فرمولِ پنهانِ آن را کشف می‌کنم و یک ایده کاملاً جدید بر اساس همان فرمول، **برای کسب‌وکار خودتان** می‌سازم!"
+        "متنِ کپشن یا نریشن آن ویدیو را اینجا بفرستید (متن یا ویس). "
+        "من فرمولِ پنهانِ آن را کشف می‌کنم و یک ایده جدید بر اساس همان فرمول، **برای کسب‌وکار خودتان** می‌سازم!"
     )
     if update.callback_query:
         await update.callback_query.answer()
@@ -596,44 +645,34 @@ async def analyze_competitor(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     try:
         prompt = f"""
-        **شخصیت:** تو یک کپی‌رایتر فوق‌حرفه‌ای و هکرِ رشد (Growth Hacker) در اینستاگرام ایران هستی.
-        
-        **ماموریت:** کاربر متن یک ریلز یا پست موفق را فرستاده است. تو باید این متن را کالبدشکافی کنی و سپس فرمول موفقیت آن را بردارد و یک ایده جدید (بومی‌سازی شده) برای کسب‌وکار خودِ کاربر بنویسی.
+        شخصیت: کپی‌رایتر فوق‌حرفه‌ای و هکرِ رشد در اینستاگرام ایران.
+        ماموریت: متن یک ریلز موفق را کالبدشکافی کن و یک ایده جدید برای کسب‌وکار کاربر بساز.
 
-        **اطلاعات کسب‌وکار کاربر (توجه: ایده جدید باید برای این کسب‌وکار باشد):**
+        اطلاعات کسب‌وکار کاربر:
         - کسب‌وکار: {user_profile['business']}
-        - هدف: {user_profile.get('goal', 'نامشخص')}
-        - مخاطب: {user_profile['audience']}
         - لحن: {user_profile['tone']}
 
-        **متن محتوای وایرال شده (ورودی):**
-        "{competitor_text}"
+        متن محتوای رقیب: "{competitor_text}"
 
-        **ساختار پاسخ (فقط فارسی روان، بدون استفاده از کاراکتر ستاره * برای بولد کردن):**
-        
+        ساختار پاسخ (فقط فارسی روان، بدون ستاره):
         🔍 تحلیل مهندسی معکوس:
         ۱. قلاب مخفی (این متن روی چه نقطه دردی دست گذاشته؟)
         ۲. فرمول روانشناسی (چرا این محتوا وایرال شده؟)
         
         💡 بومی‌سازی برای پیج شما:
         حالا بیا این فرمول رو برای پیج '{user_profile['business']}' خودت استفاده کنیم:
-        - عنوان ایده جدید: (یک عنوان جذاب بنویس)
-        - قلاب پیشنهادی تو: (یک جمله کوتاه و کوبنده)
+        - عنوان ایده جدید: (یک عنوان جذاب)
+        - قلاب پیشنهادی: (جمله کوتاه و کوبنده)
         - ساختار محتوا: (یک توضیح ۳ خطی که چطور این ویدیو رو بسازه)
         """
-        
         response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
-        ai_reply = response.choices[0].message.content.strip()
+        ai_reply = response.choices[0].message.content.strip().replace('*', '')
         
-        # حذف ستاره‌ها
-        if '*' in ai_reply: ai_reply = ai_reply.replace('*', '')
-
         await wait_msg.edit_text(ai_reply, reply_markup=get_feedback_keyboard('analyze'))
         log_event(uid, 'competitor_analyzed', "مهندسی معکوس محتوا")
     except Exception as e:
         logger.error(f"Analyze error: {e}")
         await wait_msg.edit_text("❌ مشکلی در آنالیز پیش آمد.")
-
     return ConversationHandler.END
 
 # ---------------------------------------------
@@ -648,16 +687,29 @@ async def check_profile_before_content(update: Update, context: ContextTypes.DEF
         if not prof_res.data:
             await update.message.reply_text("❌ لطفاً ابتدا از منوی اصلی، پروفایل خود را بسازید.")
             return ConversationHandler.END
+        
         context.user_data['profile'] = prof_res.data[0]
+        
         if update.message.voice:
             topic = await process_voice_to_text(update, context)
             if not topic: return ConversationHandler.END
             await update.message.reply_text(f"🗣 **موضوع:** {topic}", parse_mode='Markdown')
-        else: topic = update.message.text
+        else:
+            topic = update.message.text
+            
         context.user_data['topic'] = topic
-        await update.message.reply_text("بسیار خب! پاسخ دهید:\n\n۱/۲ - دقیقاً چه حرف، ادعا یا نظر خاصی درباره این موضوع دارید؟\n(متن تایپ کنید یا ویس بفرستید)")
+        
+        await update.message.reply_text(
+            "بسیار خب! برای اینکه سناریوی شما کاملاً واقعی باشد، پاسخ دهید:\n\n"
+            "**۱/۲ - دقیقاً چه حرف، ادعا یا نظر خاصی درباره این موضوع دارید؟**\n"
+            "(مثال: موافقم چون... / راه حل من این است که...)\n\n"
+            "*(متن تایپ کنید یا ویس بفرستید)*",
+            parse_mode='Markdown'
+        )
         return C_CLAIM
+        
     except Exception as e:
+        logger.error(f"Error in start content: {e}")
         await update.message.reply_text("❌ خطایی رخ داد.")
         return ConversationHandler.END
 
@@ -665,34 +717,46 @@ async def get_claim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.message.voice:
         claim = await process_voice_to_text(update, context)
         if not claim: return ConversationHandler.END
-    else: claim = update.message.text
+    else:
+        claim = update.message.text
+        
     context.user_data['claim'] = claim
+    
     keyboard = [
         [InlineKeyboardButton("امیدوار کننده 🌟", callback_data='emo_hope'), InlineKeyboardButton("تلنگر و هشدار ⚠️", callback_data='emo_warning')],
         [InlineKeyboardButton("طنز و سرگرمی 😂", callback_data='emo_funny'), InlineKeyboardButton("همدلی و درک 🤝", callback_data='emo_empathy')],
         [InlineKeyboardButton("علمی و قاطع 🧠", callback_data='emo_logical')]
     ]
-    await update.message.reply_text("۲/۲ - دوست دارید مخاطب بعد از دیدن این ریلز چه حسی داشته باشد؟", reply_markup=InlineKeyboardMarkup(keyboard))
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "**۲/۲ - دوست دارید مخاطب بعد از دیدن این ریلز چه حسی داشته باشد؟**",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
     return C_EMOTION
 
 async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    
     emotion = next(btn.text for row in query.message.reply_markup.inline_keyboard for btn in row if btn.callback_data == query.data)
     context.user_data['emotion'] = emotion
+    
     prof = context.user_data['profile']
     topic = context.user_data['topic']
     claim = context.user_data['claim']
+    
     await query.edit_message_text(f"حس انتخابی: {emotion}\n\n⏳ در حال ایده‌پردازی دقیق...")
+    
     try:
         prompt = f"""
         شخصیت: استراتژیست محتوای اینستاگرام. داستان از خودت نساز.
-        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط منطقی دارد؟
+        مرحله اول (فیلتر): آیا موضوع ({topic}) با کسب‌وکار ({prof['business']}) ارتباط دارد؟
         مرحله دوم (خروجی JSON):
         اگر بی‌ربط بود: {{"is_relevant": false, "rejection_message": "موضوع با کسب‌وکار ارتباطی ندارد.", "ideas": []}}
         اگر مرتبط بود:
-        سه ایده جذاب بساز.
-        مهم: ادعای کاربر: "{claim}" / احساس: "{emotion}".
+        سه ایده جذاب بساز. ادعای کاربر: "{claim}" / احساس: "{emotion}".
         {{
             "is_relevant": true,
             "rejection_message": "",
@@ -701,33 +765,44 @@ async def generate_ideas_after_emotion(update: Update, context: ContextTypes.DEF
         """
         res = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         response_data = json.loads(res.choices[0].message.content)
+        
         if not response_data.get("is_relevant", True):
-            await query.message.reply_text(f"⚠️ توجه:\n{response_data.get('rejection_message', 'نامرتبط.')}")
+            await query.message.reply_text(f"⚠️ **توجه:**\n{response_data.get('rejection_message', 'نامرتبط.')}", parse_mode='Markdown')
             log_event(str(update.effective_user.id), 'topic_rejected_gatekeeper', topic)
             return ConversationHandler.END
+
         ideas = response_data.get("ideas", [])
+        if not ideas: raise ValueError("Empty ideas.")
+
         context.user_data['ideas'] = ideas
         kb = [[InlineKeyboardButton(f"🎬 ساخت ایده {i+1}", callback_data=f'expand_{i}')] for i in range(len(ideas))]
         msg = f"موضوع: {topic}\nادعای شما: {claim}\n\n" + "\n".join([f"{i+1}. {x['title']}\nقلاب: {x['hook']}\n" for i, x in enumerate(ideas)])
         await query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb))
         log_event(str(update.effective_user.id), 'ideas_generated', topic)
         return EXPAND
-    except:
+        
+    except Exception as e:
+        logger.error(f"Ideation error: {e}")
         await query.message.reply_text("❌ خطا در ایده‌پردازی.")
         return ConversationHandler.END
 
 async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    
     if 'ideas' not in context.user_data or 'profile' not in context.user_data:
         await query.edit_message_text("⚠️ زمان نشست تمام شده. لطفاً دوباره از ابتدا شروع کنید.")
         return ConversationHandler.END
+        
     idea = context.user_data['ideas'][int(query.data.split('_')[1])]
     prof = context.user_data['profile']
     claim = context.user_data['claim']
     emotion = context.user_data['emotion']
+    
     context.user_data['dalle_topic'] = idea['title']
+    
     await query.edit_message_text(f"✅ انتخاب: {idea['title']}\n⏳ در حال نوشتن سناریوی حرفه‌ای...")
+    
     try:
         prompt = f"""
         شخصیت تو: کپی‌رایتر حرفه‌ای اینستاگرام ایران. فقط بر اساس واقعیت‌های داده شده بنویس.
@@ -743,24 +818,27 @@ async def expand_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
         ساختار خروجی:
         🎬 نقشه ساخت ریلز: {idea['title']}
-        ۱. قلاب (۰ تا ۵ ثانیه):
+        ۱. قلاب (۰-۵ ثانیه):
         تصویر: (مرتبط)
         متن روی صفحه: (کوتاه)
         نریشن: "{idea['hook']}"
-        ۲. ارائه ارزش / دلیل (۵ تا ۲۰ ثانیه):
-        تصویر: (توضیح کوتاه تصویر)
-        نریشن: (باز کردن ادعا. از [...] برای مکث استفاده کن.)
-        ۳. اقدام (۲۰ تا ۲۵ ثانیه):
-        تصویر: (تصویر پایانی)
-        نریشن: (یک دعوت به اقدام)
+        ۲. ارائه ارزش (۵-۲۰ ثانیه):
+        تصویر: (توضیح)
+        نریشن: (باز کردن ادعای کاربر با مکث [...])
+        ۳. اقدام (۲۰-۲۵ ثانیه):
+        تصویر: (پایانی)
+        نریشن: (دعوت به اقدام)
         ---
-        کپشن پیشنهادی: (۲ خط کوتاه + سوال)
+        کپشن پیشنهادی: (۲ خط + سوال)
         """
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
+        
         await context.bot.send_message(chat_id=update.effective_chat.id, text=res, reply_markup=get_feedback_and_dalle_keyboard('scenario'))
         log_event(str(update.effective_user.id), 'expansion_success', idea['title'])
     except Exception as e: 
+        logger.error(f"Error in expansion: {e}")
         await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ خطا در نوشتن سناریو.")
+    
     return ConversationHandler.END
 
 # --- اجرای ربات ---
@@ -807,7 +885,7 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action)]
     ))
 
-    # --- هندلر جدید برای تحلیل رقبا ---
+    # --- هندلر تحلیل رقبا ---
     application.add_handler(ConversationHandler(
         entry_points=[CommandHandler('analyze', analyze_start), CallbackQueryHandler(analyze_start, pattern='^menu_analyze$')],
         states={SPY_TEXT: [MessageHandler((filters.TEXT | filters.VOICE) & ~filters.COMMAND, analyze_competitor)]},
@@ -824,5 +902,5 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', cancel_action), CallbackQueryHandler(cancel_action, pattern='^cancel$')]
     ))
     
-    print("🤖 BOT DEPLOYED: COMPETITOR SPY FEATURE ADDED!")
+    print("🤖 BOT DEPLOYED: ALL BUGS SQUASHED & COMPETITOR SPY IS FULLY ARMED!")
     application.run_polling()
