@@ -83,23 +83,42 @@ def log_event(u_id, e_type, content=""):
 
 # --- مدیریت پروفایل (حل مشکل Conflict 409) ---
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     u_id = str(update.effective_user.id)
-    # بررسی وجود پروفایل از قبل
+    query = update.callback_query
+    
+    # ۱. اگر کاربر صریحاً دکمه "ویرایش" را زده است
+    if query and query.data == 're_edit_profile':
+        await query.answer()
+        await query.edit_message_text("بسیار خب، اطلاعات جدید را وارد کنید.\n\n۱/۴ - موضوع اصلی پیج شما چیست؟")
+        return P_BUSINESS
+        
+    # ۲. اگر کاربر از منوی اصلی وارد شده است
+    if query: await query.answer()
+    
+    # بررسی دیتابیس
     res = supabase.table('profiles').select("*").eq('user_id', u_id).execute()
     
-    if res.data and not context.user_data.get('re_editing'):
+    if res.data:
         p = res.data[0]
         msg = (f"👤 **پروفایل فعلی شما:**\n\n🏢 موضوع: {p['business']}\n🎯 هدف: {p['goal']}\n"
                f"👥 مخاطب: {p['audience']}\n🗣 لحن: {p['tone']}\n\nآیا قصد ویرایش دارید؟")
         kb = [[InlineKeyboardButton("📝 ویرایش پروفایل", callback_data='re_edit_profile')],
               [InlineKeyboardButton("🔙 بازگشت", callback_data='cancel')]]
-        target = update.callback_query.message if update.callback_query else update.message
-        await target.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        
+        if query:
+            await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return ConversationHandler.END
 
-    await (update.callback_query.message if update.callback_query else update.message).reply_text("۱/۴ - موضوع اصلی پیج شما چیست؟")
+    # ۳. اگر پروفایلی از قبل ندارد
+    msg = "👋 هنوز پروفایلی نساخته‌اید.\n\n۱/۴ - موضوع اصلی پیج شما چیست؟"
+    if query:
+        await query.edit_message_text(msg)
+    else:
+        await update.message.reply_text(msg)
     return P_BUSINESS
-
 async def get_business(update, context):
     context.user_data['business'] = update.message.text
     kb = [[InlineKeyboardButton("فروش 💰", callback_data='goal_sales'), InlineKeyboardButton("برندسازی 📣", callback_data='goal_branding')],
