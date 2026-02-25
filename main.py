@@ -144,7 +144,7 @@ async def get_tone_and_save(update, context):
     try:
         supabase.table('profiles').upsert(data, on_conflict='user_id').execute()
         await query.edit_message_text("✅ پروفایل با موفقیت ذخیره/بروزرسانی شد! 🚀")
-        await show_main_menu(update, context) # نمایش مجدد منو بعد از ثبت
+        await show_main_menu(update, context)
     except Exception as e:
         logger.error(f"Save Error: {e}")
         await query.edit_message_text("❌ خطا در ذخیره.")
@@ -223,7 +223,7 @@ async def coach_analyze(update, context):
     except: await wait.edit_text("❌ خطا")
     return ConversationHandler.END
 
-# --- سناریوساز اصلی ---
+# --- 🎯 سناریوساز اصلی (هوشمند و تهاجمی) ---
 async def scenario_init(update, context):
     u_id = str(update.effective_user.id)
     if not await check_daily_limit(update, u_id): return ConversationHandler.END
@@ -234,43 +234,79 @@ async def scenario_init(update, context):
     context.user_data['profile'] = prof.data[0]
     
     target = update.message if update.message else update.callback_query.message
-    await target.reply_text("🎯 لطفاً موضوع یا ادعای اصلی خود را بفرستید (متن یا ویس):")
+    await target.reply_text("🎯 لطفاً موضوع یا ادعای جنجالی خود را بفرستید (متن یا ویس):")
     return C_CLAIM
 
 async def get_claim(update, context):
     context.user_data['topic'] = await process_voice(update, context) if update.message.voice else update.message.text
-    context.user_data['claim'] = context.user_data['topic'] # یکسان سازی برای سادگی
+    context.user_data['claim'] = context.user_data['topic'] 
     kb = [[InlineKeyboardButton("امیدوارکننده ✨", callback_data='emo_hope'), InlineKeyboardButton("هشدار ⚠️", callback_data='emo_warn')], [InlineKeyboardButton("طنز 😂", callback_data='emo_fun'), InlineKeyboardButton("تخصصی 🧠", callback_data='emo_expert')]]
-    await update.message.reply_text("🎭 حس ویدیو؟", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("🎭 حس ویدیو چطور باشد؟", reply_markup=InlineKeyboardMarkup(kb))
     return C_EMOTION
 
 async def gen_ideas(update, context):
     query = update.callback_query; await query.answer()
     context.user_data['emotion'] = query.data
-    wait = await query.message.reply_text("🔮 در حال طراحی استراتژی...")
+    wait = await query.message.reply_text("🔮 در حال طراحی ۳ استراتژی ساختارشکن...")
     try:
         t, c, p = context.user_data['topic'], context.user_data['claim'], context.user_data['profile']
-        prompt = f"برای موضوع '{t}' با ادعای '{c}' بیزنس '{p['business']}'، ۳ ایده ریلز متفاوت (آموزشی, POV, ویروسی) بساز. خروجی فقط JSON: {{'ideas': [{{'type': '...', 'title': '...', 'hook': '...'}}]}}"
+        
+        # پرامپت جدید با قانون مرگبار
+        prompt = f"""تو یک کپی‌رایتر ارشد و استراتژیست ساختارشکنِ اینستاگرام هستی.
+قانون مرگبار و غیرقابل‌مذاکره: ادعای کاربر که در ادامه می‌آید، یک **حقیقت مطلق** است. تو موظفی با تمام قوا از این ادعا دفاع کنی. تحت هیچ شرایطی حق نداری ادعای کاربر را نقض کنی یا توصیه‌های کلیشه‌ای و عمومیِ اینترنت را که خلاف این ادعا هستند ارائه دهی.
+برای کسب‌وکار '{p['business']}' و موضوع '{t}'، بر اساس ادعای '{c}'، سه ایده ریلز با این ۳ زاویه دید متفاوت بنویس:
+۱. تابوشکن (Myth-Buster): حمله به باور غلطی که بقیه دارند (دفاع تهاجمی از ادعای کاربر).
+۲. اثبات منطقی (Proof): یک منطق یا زاویه دید جدید که ثابت می‌کند چرا ادعای کاربر ۱۰۰٪ درست است.
+۳. سیلی بیدارکننده (Wake-up Call): یک قلاب (Hook) تند و تیز که حقیقت ماجرا را به صورت مخاطب می‌کوبد.
+خروجی فقط به صورت JSON با این ساختار دقیق باشد:
+{{"ideas": [{{"type": "myth-buster", "title": "عنوان کوتاه", "hook": "متن قلاب جنجالی ۳ ثانیه اول"}}, {{"type": "proof", "title": "عنوان", "hook": "قلاب"}}, {{"type": "wakeup-call", "title": "عنوان", "hook": "قلاب"}}]}}"""
+
         res = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": prompt}])
         ideas = json.loads(res.choices[0].message.content)['ideas']
         context.user_data['ideas'] = ideas
+        
         kb = [[InlineKeyboardButton(f"🎬 {id['type'].upper()}", callback_data=f'expand_{i}')] for i, id in enumerate(ideas)]
-        await wait.edit_text("💎 یکی از سبک‌ها را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
+        await wait.edit_text("💎 یکی از ۳ زاویه‌دید قلاب‌محور را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
         return EXPAND
-    except: await wait.edit_text("❌ خطا در تولید ایده."); return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Gen Ideas Error: {e}")
+        await wait.edit_text("❌ خطا در تولید ایده."); return ConversationHandler.END
 
 async def expand_scenario(update, context):
     query = update.callback_query; await query.answer()
     idea = context.user_data['ideas'][int(query.data.split('_')[1])]
     context.user_data['dalle_topic'], context.user_data['dalle_style'] = idea['title'], idea['type']
-    wait = await query.message.reply_text(f"📝 نوشتن سناریو برای سبک {idea['type']}...")
+    prof = context.user_data['profile']
+    claim = context.user_data['claim']
+    
+    wait = await query.message.reply_text(f"📝 در حال نوشتن سناریوی بی‌رحمانه برای سبک {idea['type']}...")
     try:
-        script = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"سناریو کامل برای موضوع {idea['title']} سبک {idea['type']} با قلاب {idea['hook']}"}]).choices[0].message.content.replace('*', '')
+        # پرامپت جدید برای جلوگیری از کلیشه‌ها
+        prompt = f"""تو یک کپی‌رایتر و استراتژیست بی‌رحمِ اینستاگرام هستی.
+وظیفه تو نوشتن یک سناریوی کامل ریلز است.
+بیزینس: {prof['business']} | مخاطب: {prof['audience']} | لحن: {prof['tone']}
+موضوع: {idea['title']} | سبک ایده: {idea['type']} | قلاب اصلی: {idea['hook']}
+ادعای کاربر که باید با قدرت از آن دفاع کنی (مثل یک قانون مطلق): {claim}
+
+قوانین ممنوعه و خط قرمزها:
+۱. استفاده از عبارات زرد و کلیشه‌ای مثل "سلام بچه‌ها"، "آیا می‌دانستید"، "نتیجه‌گیری"، "فصل اول" کاملاً ممنوع است!
+۲. حق نداری ادعای کاربر را نقض کنی یا اطلاعات عمومی و خسته‌کننده بدهی.
+
+ساختار سناریو:
+- قلاب (Hook): دقیقاً همان قلاب جنجالی را بسط بده تا مخاطب تو ۳ ثانیه اول میخکوب شود.
+- بدنه (Body): با لحن خواسته شده، دلیل محکم و روانشناختی بیاور که چرا این ادعا درست است.
+- دعوت به اقدام (CTA): یک کال‌تواکشن جذاب برای کامنت گذاشتن یا سیو کردن ویدیو.
+
+خروجی را به صورت یک متن یکپارچه، روان و خوانا بنویس. بخش‌های 'متن روی تصویر' و 'نریشن گوینده' را مشخص کن. از ستاره (*) برای بولد کردن استفاده نکن."""
+
+        script = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         dur = math.ceil(len(script.split()) / 2.5)
-        kb = [[InlineKeyboardButton("🎨 تولید کاور هوشمند (VIP)", callback_data='dalle_trigger_request')], [InlineKeyboardButton("🔙 بازگشت", callback_data='cancel')]]
-        await wait.edit_text(f"{script}\n\n⏱ زمان: {dur} ثانیه", reply_markup=InlineKeyboardMarkup(kb))
+        kb = [[InlineKeyboardButton("🎨 تولید کاور هوشمند (VIP)", callback_data='dalle_trigger_request')], [InlineKeyboardButton("🔙 بازگشت به منو", callback_data='cancel')]]
+        await wait.edit_text(f"{script}\n\n⏱ زمان تخمینی: {dur} ثانیه", reply_markup=InlineKeyboardMarkup(kb))
         log_event(str(update.effective_user.id), 'ideas_generated', idea['type'])
-    except: await wait.edit_text("❌ خطا در سناریو.")
+    except Exception as e:
+        logger.error(f"Expand Error: {e}")
+        await wait.edit_text("❌ خطا در نگارش سناریو.")
     return ConversationHandler.END
 
 async def handle_dalle_trigger(update, context):
@@ -283,7 +319,7 @@ async def handle_dalle_trigger(update, context):
     try:
         prompt = f"Instagram Reel cover for '{topic}'. Style: {style}. High quality, 9:16. NO TEXT."
         res = client.images.generate(model="dall-e-3", prompt=prompt, size="1024x1792", quality="hd", n=1)
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=res.data[0].url, caption="🎨 کاور شما!")
+        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=res.data[0].url, caption="🎨 کاور شما آماده است!")
         await wait.delete()
         log_event(uid, 'dalle_generated', topic)
     except: await wait.edit_text("❌ خطا در تولید عکس.")
@@ -314,7 +350,7 @@ async def analyze_competitor(update, context):
     text = await process_voice(update, context) if update.message.voice else update.message.text
     wait = await update.message.reply_text("🕵️‍♂️ در حال مهندسی معکوس...")
     try:
-        res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"تحلیل این ریلز: {text}"}])
+        res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"تحلیل کپی‌رایتینگ این ریلز: {text}"}])
         await wait.edit_text(res.choices[0].message.content.replace('*', ''))
         log_event(uid, 'competitor_analyzed', text[:50])
     except: await wait.edit_text("❌ خطا")
@@ -367,7 +403,6 @@ def get_main_menu_keyboard():
 async def show_main_menu(update, context):
     msg = "🚀 **به منوی اصلی خوش آمدید!**\nلطفاً از دکمه‌های پایین انتخاب کنید:"
     
-    # ثبت معرف در صورت ورود با لینک دعوت
     if update.message and update.message.text and update.message.text.startswith('/start ref_'):
         referrer = update.message.text.split('ref_')[1]
         u_id = str(update.effective_user.id)
@@ -387,24 +422,20 @@ async def show_main_menu(update, context):
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
-    # هندلرهای پایه و منوی اصلی
     app.add_handler(CommandHandler('start', show_main_menu))
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern='^cancel$'))
     app.add_handler(MessageHandler(filters.Regex('^💎 ارتقا VIP$'), upgrade_vip_menu))
     app.add_handler(MessageHandler(filters.Regex('^🎁 هدیه$'), show_referral_menu))
     
-    # هندلرهای عملیاتی و ادمین
     app.add_handler(CallbackQueryHandler(handle_admin_payment, pattern='^[vr]_p_'))
     app.add_handler(CallbackQueryHandler(handle_dalle_trigger, pattern='^dalle_trigger_request$'))
 
-    # ۱. استودیو طراحی لوگو
     app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^🎨 طراحی لوگو \(VIP\)$'), start_logo_design)],
         states={LOGO_STYLE_SELECT: [CallbackQueryHandler(generate_logo_final, pattern='^ls_')]},
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
-    # ۲. پروفایل
     app.add_handler(ConversationHandler(
         entry_points=[
             CommandHandler('profile', profile_start), 
@@ -420,7 +451,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
-    # ۳. مربی ایده
     app.add_handler(ConversationHandler(
         entry_points=[
             CommandHandler('coach', coach_start), 
@@ -430,7 +460,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
-    # ۴. هشتگ‌ساز و تحلیل رقبا
     app.add_handler(ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex('^🏷 هشتگ‌ساز$'), hashtag_start), 
@@ -443,7 +472,6 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
-    # ۵. سناریوساز اصلی
     app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^🎬 سناریوساز استراتژیک$'), scenario_init)],
         states={
@@ -454,8 +482,7 @@ if __name__ == '__main__':
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
-    # ۶. هندلر فیش واریزی (باید همیشه در آخر باشد تا با سایر عکس‌ها تداخل نکند)
     app.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
 
-    print("🚀 Bot is running smoothly with the new Reply Keyboard!")
+    print("🚀 Master Bot is running with the aggressive copywriter!")
     app.run_polling()
