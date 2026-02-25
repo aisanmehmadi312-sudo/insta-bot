@@ -65,7 +65,7 @@ async def check_daily_limit(update, u_id):
     if is_admin(u_id) or await is_user_vip(u_id): return True
     try:
         today = datetime.now(timezone.utc).date().isoformat()
-        usage = supabase.table('logs').select("id", count="exact").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'dalle_generated']).gte('created_at', f"{today}T00:00:00Z").eq('user_id', str(u_id)).execute().count or 0
+        usage = supabase.table('logs').select("id", count="exact").in_('event_type', ['ideas_generated', 'hashtags_generated_success', 'coach_analyzed_success', 'dalle_generated', 'vip_tts_generated']).gte('created_at', f"{today}T00:00:00Z").eq('user_id', str(u_id)).execute().count or 0
         allowance = await get_user_allowance(u_id)
         if usage >= allowance:
             kb = [[InlineKeyboardButton("🎁 دریافت سهمیه", callback_data='menu_referral')], [InlineKeyboardButton("💎 ارتقا به VIP", callback_data='menu_upgrade_vip')]]
@@ -223,7 +223,7 @@ async def coach_analyze(update, context):
     except: await wait.edit_text("❌ خطا")
     return ConversationHandler.END
 
-# --- 🎯 سناریوساز اصلی (حذف کامل لحن طنز و امیدوارکننده) ---
+# --- 🎯 سناریوساز اصلی ---
 async def scenario_init(update, context):
     u_id = str(update.effective_user.id)
     if not await check_daily_limit(update, u_id): return ConversationHandler.END
@@ -241,7 +241,6 @@ async def get_claim(update, context):
     context.user_data['topic'] = await process_voice(update, context) if update.message.voice else update.message.text
     context.user_data['claim'] = context.user_data['topic'] 
     
-    # حذف دکمه‌های طنز و امیدوارکننده، حفظ پرستیژ جدی
     kb = [
         [InlineKeyboardButton("هشدار دهنده و جدی ⚠️", callback_data='emo_warn')], 
         [InlineKeyboardButton("تخصصی و سنگین 🧠", callback_data='emo_expert')]
@@ -285,7 +284,6 @@ async def expand_scenario(update, context):
     
     wait = await query.message.reply_text(f"📝 در حال نگارش سناریوی تخصصی، کوتاه و ضربه‌ای...")
     try:
-        # پرامپت طلایی و نهایی
         prompt = f"""تو یک کپی‌رایتر، روانشناس فروش و استراتژیست بی‌رحمِ اینستاگرام هستی.
 وظیفه تو نوشتن یک سناریوی ریلز به شدت کوتاه، تند و ویروسی است.
 بیزینس: {prof['business']} | مخاطب: {prof['audience']}
@@ -312,16 +310,57 @@ async def expand_scenario(update, context):
 
         script = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}]).choices[0].message.content.replace('*', '')
         
+        # ذخیره متن برای تولید ویس
+        context.user_data['last_script'] = script
+        
         word_count = len(script.split())
         dur = math.ceil(word_count / 2.5) 
         
-        kb = [[InlineKeyboardButton("🎨 تولید کاور هوشمند (VIP)", callback_data='dalle_trigger_request')], [InlineKeyboardButton("🔙 بازگشت به منو", callback_data='cancel')]]
+        kb = [
+            [InlineKeyboardButton("🎨 تولید کاور هوشمند (VIP)", callback_data='dalle_trigger_request')], 
+            [InlineKeyboardButton("🎙 دریافت ویس سناریو (VIP)", callback_data='tts_generate')],
+            [InlineKeyboardButton("🔙 بازگشت به منو", callback_data='cancel')]
+        ]
         await wait.edit_text(f"{script}\n\n⏱ زمان تخمینی نریشن: حدود {dur} ثانیه", reply_markup=InlineKeyboardMarkup(kb))
         log_event(str(update.effective_user.id), 'ideas_generated', idea['type'])
     except Exception as e:
         logger.error(f"Expand Error: {e}")
         await wait.edit_text("❌ خطا در نگارش سناریو.")
     return ConversationHandler.END
+
+# --- تولید ویس هوش مصنوعی (TTS) ---
+async def generate_tts(update, context):
+    query = update.callback_query; await query.answer()
+    uid = str(update.effective_user.id)
+    
+    if not await is_user_vip(uid) and not is_admin(uid):
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="💎 این قابلیت مخصوص کاربران VIP است.")
+        return
+
+    script = context.user_data.get('last_script')
+    if not script:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ متنی برای تبدیل به صدا یافت نشد. لطفاً دوباره سناریو بسازید.")
+        return
+
+    wait = await context.bot.send_message(chat_id=update.effective_chat.id, text="🎙 استراتژیست در حال رفتن به استودیو ضبط صدا...")
+    try:
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="onyx",
+            input=script[:4000]
+        )
+        file_path = f"tts_{uid}.ogg"
+        response.write_to_file(file_path)
+        
+        with open(file_path, 'rb') as voice_file:
+            await context.bot.send_voice(chat_id=update.effective_chat.id, voice=voice_file, caption="🎙 ویس اختصاصی سناریوی شما آماده شد!")
+        
+        os.remove(file_path)
+        await wait.delete()
+        log_event(uid, 'vip_tts_generated')
+    except Exception as e:
+        logger.error(f"TTS Error: {e}")
+        await wait.edit_text("❌ خطا در تولید صدا.")
 
 async def handle_dalle_trigger(update, context):
     query = update.callback_query; await query.answer()
@@ -370,7 +409,7 @@ async def analyze_competitor(update, context):
     except: await wait.edit_text("❌ خطا")
     return ConversationHandler.END
 
-# --- زیرمجموعه‌گیری و VIP (آپدیت قیمت) ---
+# --- زیرمجموعه‌گیری و VIP ---
 async def show_referral_menu(update, context):
     bot_un = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_un}?start=ref_{update.effective_user.id}"
@@ -450,6 +489,9 @@ if __name__ == '__main__':
     
     app.add_handler(CallbackQueryHandler(handle_admin_payment, pattern='^[vr]_p_'))
     app.add_handler(CallbackQueryHandler(handle_dalle_trigger, pattern='^dalle_trigger_request$'))
+    
+    # هندلر دکمه ویس (جدید)
+    app.add_handler(CallbackQueryHandler(generate_tts, pattern='^tts_generate$'))
 
     app.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^🎨 طراحی لوگو \(VIP\)$'), start_logo_design)],
@@ -505,5 +547,5 @@ if __name__ == '__main__':
 
     app.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
 
-    print("🚀 Master Bot is running. Price updated and cringey buttons removed!")
+    print("🚀 Master Bot is running with the new Voice-to-Voice TTS feature!")
     app.run_polling()
