@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from openai import OpenAI
 from supabase import create_client, Client
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ChatAction
 from telegram.ext import (ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler,
     filters, ConversationHandler, CallbackQueryHandler)
@@ -70,7 +70,7 @@ async def check_daily_limit(update, u_id):
         if usage >= allowance:
             kb = [[InlineKeyboardButton("🎁 دریافت سهمیه", callback_data='menu_referral')], [InlineKeyboardButton("💎 ارتقا به VIP", callback_data='menu_upgrade_vip')]]
             msg = f"⚠️ سهمیه امروز تمام شد ({usage}/{allowance})."
-            target = update.callback_query.message if update.callback_query else update.message
+            target = update.message if update.message else update.callback_query.message
             await target.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb))
             return False
         return True
@@ -93,7 +93,7 @@ async def process_voice(update, context):
 def encode_image(image_path):
     with open(image_path, "rb") as image_file: return base64.b64encode(image_file.read()).decode('utf-8')
 
-# --- بخش پروفایل (با حل مشکل دکمه ویرایش) ---
+# --- بخش پروفایل ---
 async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     u_id = str(update.effective_user.id)
     query = update.callback_query
@@ -109,7 +109,7 @@ async def profile_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if res.data:
         p = res.data[0]
         msg = f"👤 **پروفایل فعلی شما:**\n\n🏢 موضوع: {p['business']}\n🎯 هدف: {p['goal']}\n👥 مخاطب: {p['audience']}\n🗣 لحن: {p['tone']}\n\nآیا قصد ویرایش دارید؟"
-        kb = [[InlineKeyboardButton("📝 ویرایش پروفایل", callback_data='re_edit_profile')], [InlineKeyboardButton("🔙 بازگشت", callback_data='cancel')]]
+        kb = [[InlineKeyboardButton("📝 ویرایش پروفایل", callback_data='re_edit_profile')], [InlineKeyboardButton("🔙 بازگشت به منو", callback_data='cancel')]]
         target = query.message if query else update.message
         await target.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return ConversationHandler.END
@@ -144,6 +144,7 @@ async def get_tone_and_save(update, context):
     try:
         supabase.table('profiles').upsert(data, on_conflict='user_id').execute()
         await query.edit_message_text("✅ پروفایل با موفقیت ذخیره/بروزرسانی شد! 🚀")
+        await show_main_menu(update, context) # نمایش مجدد منو بعد از ثبت
     except Exception as e:
         logger.error(f"Save Error: {e}")
         await query.edit_message_text("❌ خطا در ذخیره.")
@@ -152,17 +153,20 @@ async def get_tone_and_save(update, context):
 
 # --- بخش لوگو VIP ---
 async def start_logo_design(update, context):
-    query = update.callback_query; await query.answer()
     u_id = str(update.effective_user.id)
     if not await is_user_vip(u_id) and not is_admin(u_id):
-        await query.message.reply_text("💎 طراحی لوگو مخصوص کاربران VIP است."); return ConversationHandler.END
+        target = update.message if update.message else update.callback_query.message
+        await target.reply_text("💎 طراحی لوگو مخصوص کاربران VIP است."); return ConversationHandler.END
     
     prof = supabase.table('profiles').select("*").eq('user_id', u_id).execute()
-    if not prof.data: await query.message.reply_text("❌ ابتدا پروفایل بسازید."); return ConversationHandler.END
+    if not prof.data: 
+        target = update.message if update.message else update.callback_query.message
+        await target.reply_text("❌ ابتدا پروفایل بسازید."); return ConversationHandler.END
     context.user_data['profile'] = prof.data[0]
     
     kb = [[InlineKeyboardButton("🔹 مینیمال", callback_data='ls_minimal')], [InlineKeyboardButton("🌿 ارگانیک", callback_data='ls_organic')], [InlineKeyboardButton("🛡️ امبلم", callback_data='ls_emblem')]]
-    await query.message.reply_text("🎨 یکی از ۳ سبک زیر را انتخاب کنید (بدون متن طراحی می‌شود):", reply_markup=InlineKeyboardMarkup(kb))
+    target = update.message if update.message else update.callback_query.message
+    await target.reply_text("🎨 یکی از ۳ سبک زیر را انتخاب کنید (بدون متن طراحی می‌شود):", reply_markup=InlineKeyboardMarkup(kb))
     return LOGO_STYLE_SELECT
 
 async def generate_logo_final(update, context):
@@ -187,7 +191,7 @@ async def generate_logo_final(update, context):
 # --- مربی ایده و Vision AI ---
 async def coach_start(update, context):
     msg = "🧠 **مربی هوشمند**\nمتن ایده را بفرستید یا (ویژه VIP 💎) عکس کاور را جهت تحلیل گرافیکی ارسال کنید."
-    target = update.callback_query.message if update.callback_query else update.message
+    target = update.message if update.message else update.callback_query.message
     await target.reply_text(msg, parse_mode='Markdown')
     return C_TEXT
 
@@ -225,17 +229,17 @@ async def scenario_init(update, context):
     if not await check_daily_limit(update, u_id): return ConversationHandler.END
     prof = supabase.table('profiles').select("*").eq('user_id', u_id).execute()
     if not prof.data:
-        target = update.callback_query.message if update.callback_query else update.message
-        await target.reply_text("❌ ابتدا پروفایل بسازید."); return ConversationHandler.END
+        target = update.message if update.message else update.callback_query.message
+        await target.reply_text("❌ ابتدا از منو، پروفایل خود را بسازید."); return ConversationHandler.END
     context.user_data['profile'] = prof.data[0]
-    context.user_data['topic'] = await process_voice(update, context) if update.message and update.message.voice else (update.message.text if update.message else "موضوع عمومی")
     
-    target = update.callback_query.message if update.callback_query else update.message
-    await target.reply_text("🎯 ادعای اصلی یا مهم‌ترین نکته شما چیست؟")
+    target = update.message if update.message else update.callback_query.message
+    await target.reply_text("🎯 لطفاً موضوع یا ادعای اصلی خود را بفرستید (متن یا ویس):")
     return C_CLAIM
 
 async def get_claim(update, context):
-    context.user_data['claim'] = await process_voice(update, context) if update.message.voice else update.message.text
+    context.user_data['topic'] = await process_voice(update, context) if update.message.voice else update.message.text
+    context.user_data['claim'] = context.user_data['topic'] # یکسان سازی برای سادگی
     kb = [[InlineKeyboardButton("امیدوارکننده ✨", callback_data='emo_hope'), InlineKeyboardButton("هشدار ⚠️", callback_data='emo_warn')], [InlineKeyboardButton("طنز 😂", callback_data='emo_fun'), InlineKeyboardButton("تخصصی 🧠", callback_data='emo_expert')]]
     await update.message.reply_text("🎭 حس ویدیو؟", reply_markup=InlineKeyboardMarkup(kb))
     return C_EMOTION
@@ -263,7 +267,7 @@ async def expand_scenario(update, context):
     try:
         script = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"سناریو کامل برای موضوع {idea['title']} سبک {idea['type']} با قلاب {idea['hook']}"}]).choices[0].message.content.replace('*', '')
         dur = math.ceil(len(script.split()) / 2.5)
-        kb = [[InlineKeyboardButton("🎨 تولید کاور هوشمند (VIP)", callback_data='dalle_trigger_request')], [InlineKeyboardButton("🔙 منو", callback_data='cancel')]]
+        kb = [[InlineKeyboardButton("🎨 تولید کاور هوشمند (VIP)", callback_data='dalle_trigger_request')], [InlineKeyboardButton("🔙 بازگشت", callback_data='cancel')]]
         await wait.edit_text(f"{script}\n\n⏱ زمان: {dur} ثانیه", reply_markup=InlineKeyboardMarkup(kb))
         log_event(str(update.effective_user.id), 'ideas_generated', idea['type'])
     except: await wait.edit_text("❌ خطا در سناریو.")
@@ -282,31 +286,33 @@ async def handle_dalle_trigger(update, context):
         await context.bot.send_photo(chat_id=update.effective_chat.id, photo=res.data[0].url, caption="🎨 کاور شما!")
         await wait.delete()
         log_event(uid, 'dalle_generated', topic)
-    except: await wait.edit_text("❌ خطا.")
+    except: await wait.edit_text("❌ خطا در تولید عکس.")
 
 # --- هشتگ و آنالیز ---
 async def hashtag_start(update, context):
-    await (update.callback_query.message if update.callback_query else update.message).reply_text("🏷 موضوع پست؟")
+    target = update.message if update.message else update.callback_query.message
+    await target.reply_text("🏷 موضوع پست را بفرستید:")
     return H_TOPIC
 async def hashtag_generate(update, context):
     uid = str(update.effective_user.id)
     if not await check_daily_limit(update, uid): return ConversationHandler.END
     topic = await process_voice(update, context) if update.message.voice else update.message.text
-    wait = await update.message.reply_text("⏳ استخراج...")
+    wait = await update.message.reply_text("⏳ در حال استخراج...")
     try:
-        res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"۲۰ هشتگ برای {topic}"}])
+        res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"۲۰ هشتگ پربازدید برای {topic}"}])
         await wait.edit_text(res.choices[0].message.content.replace('*', ''))
         log_event(uid, 'hashtags_generated_success', topic)
     except: await wait.edit_text("❌ خطا")
     return ConversationHandler.END
 
 async def analyze_start(update, context):
-    await (update.callback_query.message if update.callback_query else update.message).reply_text("🕵️‍♂️ متن ریلز موفق را بفرستید:")
+    target = update.message if update.message else update.callback_query.message
+    await target.reply_text("🕵️‍♂️ متن ریلز موفق را بفرستید تا تحلیل کنم:")
     return SPY_TEXT
 async def analyze_competitor(update, context):
     uid = str(update.effective_user.id)
     text = await process_voice(update, context) if update.message.voice else update.message.text
-    wait = await update.message.reply_text("🕵️‍♂️ تحلیل...")
+    wait = await update.message.reply_text("🕵️‍♂️ در حال مهندسی معکوس...")
     try:
         res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": f"تحلیل این ریلز: {text}"}])
         await wait.edit_text(res.choices[0].message.content.replace('*', ''))
@@ -318,21 +324,22 @@ async def analyze_competitor(update, context):
 async def show_referral_menu(update, context):
     bot_un = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_un}?start=ref_{update.effective_user.id}"
-    await (update.callback_query.message if update.callback_query else update.message).reply_text(f"🎁 لینک دعوت شما:\n`{link}`", parse_mode='Markdown')
+    target = update.message if update.message else update.callback_query.message
+    await target.reply_text(f"🎁 **لینک دعوت اختصاصی شما:**\n\n`{link}`\n\nبا دعوت هر دوست، {REFERRAL_REWARD} سهمیه بگیرید.", parse_mode='Markdown')
 
 async def upgrade_vip_menu(update, context):
-    query = update.callback_query; await query.answer()
+    target = update.message if update.message else update.callback_query.message
     context.user_data['awaiting_receipt'] = True
-    await query.message.reply_text(f"💎 ارتقا VIP\n💳 کارت: `{CARD_NUMBER}`\n👤 بنام: {CARD_NAME}\nبعد از واریز عکس فیش بفرستید.", parse_mode='Markdown')
+    await target.reply_text(f"💎 **ارتقا به VIP نامحدود**\n\n💳 شماره کارت: `{CARD_NUMBER}`\n👤 به نام: {CARD_NAME}\n\n📌 لطفاً بعد از واریز، عکس فیش را همینجا بفرستید.", parse_mode='Markdown')
 
 async def handle_receipt(update, context):
     if context.user_data.get('awaiting_receipt'):
         user = update.effective_user
         kb = [[InlineKeyboardButton("✅ تایید", callback_data=f'v_p_{user.id}')], [InlineKeyboardButton("❌ رد", callback_data=f'r_p_{user.id}')]]
-        await context.bot.send_photo(chat_id=ADMIN_ID, photo=update.message.photo[-1].file_id, caption=f"💰 فیش از `{user.id}`", reply_markup=InlineKeyboardMarkup(kb))
-        await update.message.reply_text("⏳ ارسال شد.")
+        await context.bot.send_photo(chat_id=ADMIN_ID, photo=update.message.photo[-1].file_id, caption=f"💰 فیش ارسالی از `{user.id}`", reply_markup=InlineKeyboardMarkup(kb))
+        await update.message.reply_text("⏳ فیش شما برای ادمین ارسال شد.")
         context.user_data['awaiting_receipt'] = False
-    else: await update.message.reply_text("ابتدا از منو انتخاب کنید.")
+    else: await update.message.reply_text("لطفاً از منوی پایین یک گزینه را انتخاب کنید.")
 
 async def handle_admin_payment(update, context):
     query = update.callback_query; await query.answer()
@@ -340,74 +347,115 @@ async def handle_admin_payment(update, context):
     action, _, target_uid = query.data.split('_')
     if action == 'v':
         supabase.table('profiles').update({'is_vip': True}).eq('user_id', target_uid).execute()
-        await context.bot.send_message(chat_id=target_uid, text="🎉 VIP شدید!")
-        await query.edit_message_caption(caption="✅ تایید شد.")
+        await context.bot.send_message(chat_id=target_uid, text="🎉 تبریک! حساب شما VIP شد.")
+        await query.edit_message_caption(caption="✅ تایید و اعمال شد.")
     else:
-        await context.bot.send_message(chat_id=target_uid, text="❌ رد شد.")
+        await context.bot.send_message(chat_id=target_uid, text="❌ متاسفانه فیش شما تایید نشد.")
         await query.edit_message_caption(caption="❌ رد شد.")
 
-# --- منوی اصلی ---
+# --- منوی اصلی (Reply Keyboard) ---
 def get_main_menu_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎬 سناریوساز استراتژیک", callback_data='m_sc')],
-        [InlineKeyboardButton("🧠 مربی ایده و آنالیزور", callback_data='menu_coach')],
-        [InlineKeyboardButton("🎨 طراحی لوگو (VIP)", callback_data='menu_logo_design')],
-        [InlineKeyboardButton("🏷 هشتگ‌ساز", callback_data='menu_hashtags'), InlineKeyboardButton("🕵️‍♂️ تحلیل رقبا", callback_data='menu_analyze')],
-        [InlineKeyboardButton("👤 پروفایل", callback_data='menu_profile'), InlineKeyboardButton("🎁 هدیه", callback_data='menu_referral')],
-        [InlineKeyboardButton("💎 ارتقا VIP", callback_data='menu_upgrade_vip')]
-    ])
+    keyboard = [
+        [KeyboardButton("🎬 سناریوساز استراتژیک"), KeyboardButton("🧠 مربی ایده و آنالیزور")],
+        [KeyboardButton("🎨 طراحی لوگو (VIP)")],
+        [KeyboardButton("🏷 هشتگ‌ساز"), KeyboardButton("🕵️‍♂️ تحلیل رقبا")],
+        [KeyboardButton("👤 پروفایل"), KeyboardButton("🎁 هدیه")],
+        [KeyboardButton("💎 ارتقا VIP")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, is_persistent=True)
 
 async def show_main_menu(update, context):
-    msg = "🚀 منوی اصلی:"
-    if update.message and update.message.text.startswith('/start ref_'):
+    msg = "🚀 **به منوی اصلی خوش آمدید!**\nلطفاً از دکمه‌های پایین انتخاب کنید:"
+    
+    # ثبت معرف در صورت ورود با لینک دعوت
+    if update.message and update.message.text and update.message.text.startswith('/start ref_'):
         referrer = update.message.text.split('ref_')[1]
         u_id = str(update.effective_user.id)
-        if referrer != u_id: supabase.table('profiles').upsert({'user_id': u_id, 'referred_by': referrer}, on_conflict='user_id').execute()
-    target = update.message if update.message else update.callback_query.message
-    await target.reply_text(msg, reply_markup=get_main_menu_keyboard())
+        if referrer != u_id: 
+            try: supabase.table('profiles').upsert({'user_id': u_id, 'referred_by': referrer}, on_conflict='user_id').execute()
+            except: pass
+
+    if update.message:
+        await update.message.reply_text(msg, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
+    elif update.callback_query:
+        await update.callback_query.answer()
+        try: await update.callback_query.message.delete()
+        except: pass
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, reply_markup=get_main_menu_keyboard(), parse_mode='Markdown')
 
 # --- اجرای ربات ---
 if __name__ == '__main__':
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
+    # هندلرهای پایه و منوی اصلی
     app.add_handler(CommandHandler('start', show_main_menu))
     app.add_handler(CallbackQueryHandler(show_main_menu, pattern='^cancel$'))
-    app.add_handler(CallbackQueryHandler(upgrade_vip_menu, pattern='^menu_upgrade_vip$'))
-    app.add_handler(CallbackQueryHandler(show_referral_menu, pattern='^menu_referral$'))
+    app.add_handler(MessageHandler(filters.Regex('^💎 ارتقا VIP$'), upgrade_vip_menu))
+    app.add_handler(MessageHandler(filters.Regex('^🎁 هدیه$'), show_referral_menu))
+    
+    # هندلرهای عملیاتی و ادمین
     app.add_handler(CallbackQueryHandler(handle_admin_payment, pattern='^[vr]_p_'))
     app.add_handler(CallbackQueryHandler(handle_dalle_trigger, pattern='^dalle_trigger_request$'))
 
+    # ۱. استودیو طراحی لوگو
     app.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_logo_design, pattern='^menu_logo_design$')],
+        entry_points=[MessageHandler(filters.Regex('^🎨 طراحی لوگو \(VIP\)$'), start_logo_design)],
         states={LOGO_STYLE_SELECT: [CallbackQueryHandler(generate_logo_final, pattern='^ls_')]},
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
+    # ۲. پروفایل
     app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('profile', profile_start), CallbackQueryHandler(profile_start, pattern='^(menu_profile|re_edit_profile)$')],
-        states={P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)], P_GOAL: [CallbackQueryHandler(get_goal)], P_AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)], P_TONE: [CallbackQueryHandler(get_tone_and_save)]},
+        entry_points=[
+            CommandHandler('profile', profile_start), 
+            MessageHandler(filters.Regex('^👤 پروفایل$'), profile_start),
+            CallbackQueryHandler(profile_start, pattern='^re_edit_profile$')
+        ],
+        states={
+            P_BUSINESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_business)], 
+            P_GOAL: [CallbackQueryHandler(get_goal)], 
+            P_AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_audience)], 
+            P_TONE: [CallbackQueryHandler(get_tone_and_save)]
+        },
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
+    # ۳. مربی ایده
     app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler('coach', coach_start), CallbackQueryHandler(coach_start, pattern='^menu_coach$')],
+        entry_points=[
+            CommandHandler('coach', coach_start), 
+            MessageHandler(filters.Regex('^🧠 مربی ایده و آنالیزور$'), coach_start)
+        ],
         states={C_TEXT: [MessageHandler(filters.PHOTO | filters.TEXT | filters.VOICE, coach_analyze)]},
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
+    # ۴. هشتگ‌ساز و تحلیل رقبا
     app.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(hashtag_start, pattern='^menu_hashtags$'), CallbackQueryHandler(analyze_start, pattern='^menu_analyze$')],
-        states={H_TOPIC: [MessageHandler(filters.TEXT | filters.VOICE, hashtag_generate)], SPY_TEXT: [MessageHandler(filters.TEXT | filters.VOICE, analyze_competitor)]},
+        entry_points=[
+            MessageHandler(filters.Regex('^🏷 هشتگ‌ساز$'), hashtag_start), 
+            MessageHandler(filters.Regex('^🕵️‍♂️ تحلیل رقبا$'), analyze_start)
+        ],
+        states={
+            H_TOPIC: [MessageHandler(filters.TEXT | filters.VOICE, hashtag_generate)], 
+            SPY_TEXT: [MessageHandler(filters.TEXT | filters.VOICE, analyze_competitor)]
+        },
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
+    # ۵. سناریوساز اصلی
     app.add_handler(ConversationHandler(
-        entry_points=[CallbackQueryHandler(scenario_init, pattern='^m_sc$'), MessageHandler(filters.TEXT & ~filters.COMMAND, scenario_init)],
-        states={C_CLAIM: [MessageHandler(filters.TEXT | filters.VOICE, get_claim)], C_EMOTION: [CallbackQueryHandler(gen_ideas, pattern='^emo_')], EXPAND: [CallbackQueryHandler(expand_scenario, pattern='^expand_')]},
+        entry_points=[MessageHandler(filters.Regex('^🎬 سناریوساز استراتژیک$'), scenario_init)],
+        states={
+            C_CLAIM: [MessageHandler(filters.TEXT | filters.VOICE, get_claim)], 
+            C_EMOTION: [CallbackQueryHandler(gen_ideas, pattern='^emo_')], 
+            EXPAND: [CallbackQueryHandler(expand_scenario, pattern='^expand_')]
+        },
         fallbacks=[CommandHandler('cancel', show_main_menu)]
     ))
 
+    # ۶. هندلر فیش واریزی (باید همیشه در آخر باشد تا با سایر عکس‌ها تداخل نکند)
     app.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
 
-    print("🚀 Bot is running!")
+    print("🚀 Bot is running smoothly with the new Reply Keyboard!")
     app.run_polling()
