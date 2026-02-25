@@ -361,6 +361,36 @@ def estimate_duration(text):
     word_count = len(text.split())
     seconds = math.ceil(word_count / 2.5)
     return seconds
+# --- بخش جا افتاده: تولید کاور DALL-E 3 برای سناریوها ---
+
+async def handle_dalle_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    uid = str(update.effective_user.id)
+    
+    # چک کردن وضعیت VIP
+    if not await is_user_vip(uid) and not is_admin(uid):
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="💎 **تولید کاور با هوش مصنوعی مخصوص کاربران VIP است.**")
+        return
+    
+    # گرفتن اطلاعات ذخیره شده در مرحله سناریو
+    topic = context.user_data.get('dalle_topic', 'Instagram Reel')
+    style = context.user_data.get('dalle_style', 'modern')
+    wait = await context.bot.send_message(chat_id=update.effective_chat.id, text=f"🎨 در حال طراحی کاور سبک {style}...")
+    
+    try:
+        # پرامپت مخصوص کاور ریلز (بدون متن برای جلوگیری از خرابکاری دال-ای)
+        prompt = f"An eye-catching Instagram Reel cover for '{topic}'. Style: {style}. High quality, 9:16 aspect ratio. NO TEXT."
+        res = client.images.generate(model="dall-e-3", prompt=prompt, size="1024x1792", quality="hd", n=1)
+        
+        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=res.data[0].url, caption="🎨 کاور پیشنهادی شما آماده شد!")
+        await wait.delete()
+        log_event(uid, 'dalle_generated', topic)
+    except Exception as e:
+        logger.error(f"DALL-E Error: {e}")
+        await wait.edit_text("❌ خطا در برقراری ارتباط با سرور تولید تصویر.")
+
+# ---------------------------------------------------------
+
 # --- ۱۰. سیستم زیرمجموعه‌گیری و VIP ---
 
 async def show_referral_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
