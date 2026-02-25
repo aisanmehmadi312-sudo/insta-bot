@@ -20,7 +20,7 @@ ADMIN_ID = os.environ.get("ADMIN_ID")
 
 DAILY_LIMIT, REFERRAL_REWARD = 5, 3
 CARD_NUMBER, CARD_NAME = "6118-2800-5587-6343", "امیراحمد شاه حسینی"
-VIP_PRICE = "۹۹,۰۰۰ تومان"
+VIP_PRICE = "۱۹۹,۰۰۰ تومان"
 LOGO_STYLES_PROMPTS = {
     'ls_minimal': 'Minimalist, clean geometric lines, modern, sleek icon. Flat design.',
     'ls_organic': 'Hand-drawn, watercolor texture, organic shapes, friendly and natural feel.',
@@ -223,7 +223,7 @@ async def coach_analyze(update, context):
     except: await wait.edit_text("❌ خطا")
     return ConversationHandler.END
 
-# --- 🎯 سناریوساز اصلی (هوشمند، تهاجمی و کوتاه) ---
+# --- 🎯 سناریوساز اصلی (حذف کامل لحن طنز و امیدوارکننده) ---
 async def scenario_init(update, context):
     u_id = str(update.effective_user.id)
     if not await check_daily_limit(update, u_id): return ConversationHandler.END
@@ -240,8 +240,13 @@ async def scenario_init(update, context):
 async def get_claim(update, context):
     context.user_data['topic'] = await process_voice(update, context) if update.message.voice else update.message.text
     context.user_data['claim'] = context.user_data['topic'] 
-    kb = [[InlineKeyboardButton("امیدوارکننده ✨", callback_data='emo_hope'), InlineKeyboardButton("هشدار ⚠️", callback_data='emo_warn')], [InlineKeyboardButton("طنز 😂", callback_data='emo_fun'), InlineKeyboardButton("تخصصی 🧠", callback_data='emo_expert')]]
-    await update.message.reply_text("🎭 حس ویدیو چطور باشد؟", reply_markup=InlineKeyboardMarkup(kb))
+    
+    # حذف دکمه‌های طنز و امیدوارکننده، حفظ پرستیژ جدی
+    kb = [
+        [InlineKeyboardButton("هشدار دهنده و جدی ⚠️", callback_data='emo_warn')], 
+        [InlineKeyboardButton("تخصصی و سنگین 🧠", callback_data='emo_expert')]
+    ]
+    await update.message.reply_text("🎭 می‌خواهید لحن و حس ویدیو چطور باشد؟", reply_markup=InlineKeyboardMarkup(kb))
     return C_EMOTION
 
 async def gen_ideas(update, context):
@@ -280,7 +285,7 @@ async def expand_scenario(update, context):
     
     wait = await query.message.reply_text(f"📝 در حال نگارش سناریوی تخصصی، کوتاه و ضربه‌ای...")
     try:
-        # پرامپت طلایی و نهایی با قلاب میخکوب‌کننده
+        # پرامپت طلایی و نهایی
         prompt = f"""تو یک کپی‌رایتر، روانشناس فروش و استراتژیست بی‌رحمِ اینستاگرام هستی.
 وظیفه تو نوشتن یک سناریوی ریلز به شدت کوتاه، تند و ویروسی است.
 بیزینس: {prof['business']} | مخاطب: {prof['audience']}
@@ -290,16 +295,16 @@ async def expand_scenario(update, context):
 قوانین مرگبار و خط قرمزها:
 ۱. زمان طلایی: کل متن نریشن باید بین ۴۰ تا حداکثر ۶۰ کلمه باشد (حدود ۲۰ ثانیه). سریع برو سر اصل مطلب.
 ۲. لحن صریح، قاطع و زنده: لحن تو باید مثل یک متخصصِ حرفه‌ای اما رک و بی‌تعارف باشد. 
-   - ممنوعه: استفاده از کلمات کرینج، لوس و غیرحرفه‌ای (مثل "تو دل برو"، "رفیق"، "عزیزم") مطلقاً ممنوع است.
+   - ممنوعه: استفاده از کلمات کرینج، لوس، طنز و غیرحرفه‌ای (مثل "عزیزان دل"، "تو دل برو"، "رفیق") مطلقاً ممنوع است.
    - ممنوعه: استفاده از افعال ادبی، قدیمی و شاعرانه مطلقاً ممنوع است.
    - مجاز: کلمات باید قدرتمند، روزمره و با اعتماد به نفس باشند.
-۳. پایان‌بندی هوشمند (قانون آهنین): تحت هیچ شرایطی حق نداری کلمات "کامنت"، "سیو"، "لایک"، "اشتراک" یا "بگو" را استفاده کنی. پایان فقط ارجاع به کپشن یا یک سوال چالشی بدون درخواست جواب باشد.
+۳. پایان‌بندی هوشمند (قانون آهنین): تحت هیچ شرایطی حق نداری کلمات "کامنت"، "سیو"، "لایک"، "اشتراک" یا "بگو" را استفاده کنی. پایان فقط ارجاع غیرمستقیم به کپشن یا یک سوال چالشی بدون درخواست جواب باشد.
 ۴. عبارات زرد مثل "سلام"، "آیا می‌دانستید"، "نتیجه‌گیری" کاملاً ممنوع است.
-۵. قلابِ شوکه‌کننده (مهم): قلاب (۳ ثانیه اول) باید مثل یک سیلی مخاطب را بیدار کند. جملات خنثی مثل "همه می‌گویند..."، "شاید فکر کنید..." یا "امروز می‌خوام بگم..." به شدت ممنوع است. قلاب را بی‌مقدمه، با یک کنایه، تضاد شدید، یا دست گذاشتن مستقیم روی درد مخاطب شروع کن تا کاربر نتواند اسکرول کند.
+۵. قلابِ شوکه‌کننده (مهم): قلاب (۳ ثانیه اول) باید مثل یک سیلی مخاطب را بیدار کند. جملات خنثی مثل "همه می‌گویند..."، "شاید فکر کنید..." به شدت ممنوع است. قلاب را بی‌مقدمه، با یک کنایه، تضاد شدید، یا دست گذاشتن مستقیم روی درد مخاطب شروع کن تا کاربر نتواند اسکرول کند.
 
 ساختار سناریو (سریع و ضربه‌ای):
 - متن روی تصویر (Hook Visual): یک تیتر به شدت کنجکاوکننده و کوتاه.
-- نریشن قلاب (Hook Audio): اجرای قانون پنجم. یک شروع طوفانی، بی‌مقدمه و میخکوب‌کننده.
+- نریشن قلاب (Hook Audio): اجرای قانون پنجم. یک شروع طوفانی و میخکوب‌کننده.
 - نریشن بدنه (Body): فقط یک دلیل کوبنده (حداکثر ۲ جمله).
 - نریشن پایان (Invisible CTA): ضربه نهایی بر اساس قانون سوم.
 
@@ -365,7 +370,7 @@ async def analyze_competitor(update, context):
     except: await wait.edit_text("❌ خطا")
     return ConversationHandler.END
 
-# --- زیرمجموعه‌گیری و VIP ---
+# --- زیرمجموعه‌گیری و VIP (آپدیت قیمت) ---
 async def show_referral_menu(update, context):
     bot_un = (await context.bot.get_me()).username
     link = f"https://t.me/{bot_un}?start=ref_{update.effective_user.id}"
@@ -375,14 +380,21 @@ async def show_referral_menu(update, context):
 async def upgrade_vip_menu(update, context):
     target = update.message if update.message else update.callback_query.message
     context.user_data['awaiting_receipt'] = True
-    await target.reply_text(f"💎 **ارتقا به VIP نامحدود**\n\n💳 شماره کارت: `{CARD_NUMBER}`\n👤 به نام: {CARD_NAME}\n\n📌 لطفاً بعد از واریز، عکس فیش را همینجا بفرستید.", parse_mode='Markdown')
+    msg = (
+        f"💎 **ارتقا به حساب VIP (اشتراک یک ماهه)**\n\n"
+        f"💳 **شماره کارت:** `{CARD_NUMBER}`\n"
+        f"👤 **به نام:** {CARD_NAME}\n"
+        f"💰 **مبلغ قابل پرداخت:** {VIP_PRICE}\n\n"
+        f"📌 لطفاً بعد از واریز، **عکس فیش** را همینجا بفرستید."
+    )
+    await target.reply_text(msg, parse_mode='Markdown')
 
 async def handle_receipt(update, context):
     if context.user_data.get('awaiting_receipt'):
         user = update.effective_user
-        kb = [[InlineKeyboardButton("✅ تایید", callback_data=f'v_p_{user.id}')], [InlineKeyboardButton("❌ رد", callback_data=f'r_p_{user.id}')]]
+        kb = [[InlineKeyboardButton("✅ تایید (۱ ماهه)", callback_data=f'v_p_{user.id}')], [InlineKeyboardButton("❌ رد", callback_data=f'r_p_{user.id}')]]
         await context.bot.send_photo(chat_id=ADMIN_ID, photo=update.message.photo[-1].file_id, caption=f"💰 فیش ارسالی از `{user.id}`", reply_markup=InlineKeyboardMarkup(kb))
-        await update.message.reply_text("⏳ فیش شما برای ادمین ارسال شد.")
+        await update.message.reply_text("⏳ فیش شما برای پشتیبانی ارسال شد و به زودی بررسی می‌شود.")
         context.user_data['awaiting_receipt'] = False
     else: await update.message.reply_text("لطفاً از منوی پایین یک گزینه را انتخاب کنید.")
 
@@ -392,10 +404,10 @@ async def handle_admin_payment(update, context):
     action, _, target_uid = query.data.split('_')
     if action == 'v':
         supabase.table('profiles').update({'is_vip': True}).eq('user_id', target_uid).execute()
-        await context.bot.send_message(chat_id=target_uid, text="🎉 تبریک! حساب شما VIP شد.")
+        await context.bot.send_message(chat_id=target_uid, text="🎉 تبریک! حساب شما به VIP یک ماهه ارتقا یافت.")
         await query.edit_message_caption(caption="✅ تایید و اعمال شد.")
     else:
-        await context.bot.send_message(chat_id=target_uid, text="❌ متاسفانه فیش شما تایید نشد.")
+        await context.bot.send_message(chat_id=target_uid, text="❌ متاسفانه فیش شما تایید نشد. در صورت بروز مشکل به پشتیبانی پیام دهید.")
         await query.edit_message_caption(caption="❌ رد شد.")
 
 # --- منوی اصلی (Reply Keyboard) ---
@@ -493,5 +505,5 @@ if __name__ == '__main__':
 
     app.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
 
-    print("🚀 Bot is running with the ultimate strict copywriter prompt and golden hooks!")
+    print("🚀 Master Bot is running. Price updated and cringey buttons removed!")
     app.run_polling()
