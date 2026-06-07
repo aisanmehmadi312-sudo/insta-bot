@@ -147,56 +147,179 @@ async def get_tone_and_save(update, context):
     return ConversationHandler.END
 
 # --- بخش لوگو VIP (نسخه جدید با قابلیت شخصی‌سازی) ---
+import logging
+import traceback
+
+logging.basicConfig(level=logging.INFO)
 async def start_logo_design(update, context):
-    u_id = str(update.effective_user.id)
-    if not await is_user_vip(u_id) and not is_admin(u_id):
+    try:
+        u_id = str(update.effective_user.id)
+
+        if not await is_user_vip(u_id) and not is_admin(u_id):
+            target = update.message if update.message else update.callback_query.message
+            await target.reply_text("💎 طراحی لوگو مخصوص کاربران VIP است.")
+            return ConversationHandler.END
+
+        kb = [
+            [InlineKeyboardButton("🤖 بر اساس پروفایل من", callback_data='logo_mode_auto')],
+            [InlineKeyboardButton("✍️ وارد کردن موضوع دلخواه", callback_data='logo_mode_custom')]
+        ]
+
         target = update.message if update.message else update.callback_query.message
-        await target.reply_text("💎 طراحی لوگو مخصوص کاربران VIP است."); return ConversationHandler.END
-    
-    kb = [
-        [InlineKeyboardButton("🤖 بر اساس پروفایل من", callback_data='logo_mode_auto')],
-        [InlineKeyboardButton("✍️ وارد کردن موضوع دلخواه", callback_data='logo_mode_custom')]
-    ]
-    target = update.message if update.message else update.callback_query.message
-    await target.reply_text("🎨 چطور لوگو را طراحی کنم؟", reply_markup=InlineKeyboardMarkup(kb))
-    return LOG_MODE
+        await target.reply_text(
+            "🎨 چطور لوگو را طراحی کنم؟",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+        return LOG_MODE
+
+    except Exception as e:
+        logging.error(f"start_logo_design failed: {e}")
+        logging.error(traceback.format_exc())
+
+        target = update.message if update.message else update.callback_query.message
+        await target.reply_text("❌ خطا در شروع طراحی لوگو.")
+        return ConversationHandler.END
+
 
 async def logo_mode_handle(update, context):
-    query = update.callback_query; await query.answer()
-    if query.data == 'logo_mode_custom':
-        await query.edit_message_text("📝 لطفاً موضوع یا پرامپت لوگوی خود را بفرستید (انگلیسی یا فارسی):")
-        return LOGO_CUSTOM_PROMPT
-    else:
-        u_id = str(update.effective_user.id)
-        prof = supabase.table('profiles').select("*").eq('user_id', u_id).execute()
-        if not prof.data:
-            await query.edit_message_text("❌ ابتدا پروفایل بسازید."); return ConversationHandler.END
-        context.user_data['logo_topic'] = f"Business: {prof.data[0]['business']}, Audience: {prof.data[0]['audience']}"
-        kb = [[InlineKeyboardButton("🔹 مینیمال", callback_data='ls_minimal')], [InlineKeyboardButton("🌿 ارگانیک", callback_data='ls_organic')], [InlineKeyboardButton("🛡️ امبلم", callback_data='ls_emblem')]]
-        await query.edit_message_text("🎨 سبک لوگو را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
-        return LOGO_STYLE_SELECT
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        if query.data == 'logo_mode_custom':
+            await query.edit_message_text(
+                "📝 لطفاً موضوع یا پرامپت لوگوی خود را بفرستید، انگلیسی یا فارسی:"
+            )
+            return LOGO_CUSTOM_PROMPT
+
+        else:
+            u_id = str(update.effective_user.id)
+
+            prof = supabase.table('profiles').select("*").eq('user_id', u_id).execute()
+
+            if not prof.data:
+                await query.edit_message_text("❌ ابتدا پروفایل بسازید.")
+                return ConversationHandler.END
+
+            business = prof.data[0].get('business', '')
+            audience = prof.data[0].get('audience', '')
+
+            context.user_data['logo_topic'] = f"Business: {business}, Audience: {audience}"
+
+            kb = [
+                [InlineKeyboardButton("🔹 مینیمال", callback_data='ls_minimal')],
+                [InlineKeyboardButton("🌿 ارگانیک", callback_data='ls_organic')],
+                [InlineKeyboardButton("🛡️ امبلم", callback_data='ls_emblem')]
+            ]
+
+            await query.edit_message_text(
+                "🎨 سبک لوگو را انتخاب کنید:",
+                reply_markup=InlineKeyboardMarkup(kb)
+            )
+
+            return LOGO_STYLE_SELECT
+
+    except Exception as e:
+        logging.error(f"logo_mode_handle failed: {e}")
+        logging.error(traceback.format_exc())
+
+        await query.edit_message_text("❌ خطا در دریافت اطلاعات لوگو.")
+        return ConversationHandler.END
+
 
 async def get_custom_logo_topic(update, context):
-    context.user_data['logo_topic'] = update.message.text
-    kb = [[InlineKeyboardButton("🔹 مینیمال", callback_data='ls_minimal')], [InlineKeyboardButton("🌿 ارگانیک", callback_data='ls_organic')], [InlineKeyboardButton("🛡️ امبلم", callback_data='ls_emblem')]]
-    await update.message.reply_text("🎨 حالا سبک لوگو را انتخاب کنید:", reply_markup=InlineKeyboardMarkup(kb))
-    return LOGO_STYLE_SELECT
+    try:
+        context.user_data['logo_topic'] = update.message.text
+
+        kb = [
+            [InlineKeyboardButton("🔹 مینیمال", callback_data='ls_minimal')],
+            [InlineKeyboardButton("🌿 ارگانیک", callback_data='ls_organic')],
+            [InlineKeyboardButton("🛡️ امبلم", callback_data='ls_emblem')]
+        ]
+
+        await update.message.reply_text(
+            "🎨 حالا سبک لوگو را انتخاب کنید:",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
+        return LOGO_STYLE_SELECT
+
+    except Exception as e:
+        logging.error(f"get_custom_logo_topic failed: {e}")
+        logging.error(traceback.format_exc())
+
+        await update.message.reply_text("❌ خطا در ثبت موضوع لوگو.")
+        return ConversationHandler.END
+
 
 async def generate_logo_final(update, context):
-    query = update.callback_query; await query.answer()
-    style_key = query.data
-    topic = context.user_data.get('logo_topic', 'Modern Business')
-    style_prompt = LOGO_STYLES_PROMPTS.get(style_key, LOGO_STYLES_PROMPTS['ls_minimal'])
-    wait = await query.message.reply_text("🎨 در حال طراحی لوگو...")
-    try:
-        dalle_prompt = f"Professional logo ICON ONLY. NO TEXT. Subject: {topic}. Style: {style_prompt}. Vector art, solid background."
-        res = client.images.generate(model="dall-e-3", prompt=dalle_prompt, size="1024x1024", n=1)
-        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=res.data[0].url, caption=f"🎨 لوگوی درخواستی آماده شد!")
-        await wait.delete()
-        log_event(str(update.effective_user.id), 'vip_logo_generated', topic[:50])
-    except: await wait.edit_text("❌ خطا در تولید لوگو.")
-    return ConversationHandler.END
+    query = update.callback_query
+    await query.answer()
 
+    wait = None
+
+    try:
+        style_key = query.data
+        topic = context.user_data.get('logo_topic', 'Modern Business')
+
+        style_prompt = LOGO_STYLES_PROMPTS.get(
+            style_key,
+            LOGO_STYLES_PROMPTS['ls_minimal']
+        )
+
+        wait = await query.message.reply_text("🎨 در حال طراحی لوگو... لطفاً کمی صبر کنید.")
+
+        dalle_prompt = (
+            f"Professional logo ICON ONLY. NO TEXT. "
+            f"Subject: {topic}. "
+            f"Style: {style_prompt}. "
+            f"Vector art, clean design, solid background, high quality, centered composition."
+        )
+
+        logging.info(f"Generating logo for user {update.effective_user.id}")
+        logging.info(f"Logo prompt: {dalle_prompt}")
+
+        res = client.images.generate(
+            model="dall-e-3",
+            prompt=dalle_prompt,
+            size="1024x1024",
+            n=1
+        )
+
+        image_url = res.data[0].url
+
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=image_url,
+            caption="🎨 لوگوی درخواستی آماده شد!"
+        )
+
+        if wait:
+            await wait.delete()
+
+        log_event(
+            str(update.effective_user.id),
+            'vip_logo_generated',
+            topic[:50]
+        )
+
+        return ConversationHandler.END
+
+    except Exception as e:
+        logging.error(f"generate_logo_final failed: {e}")
+        logging.error(traceback.format_exc())
+
+        if wait:
+            try:
+                await wait.edit_text("❌ خطا در تولید لوگو.")
+            except Exception:
+                await query.message.reply_text("❌ خطا در تولید لوگو.")
+        else:
+            await query.message.reply_text("❌ خطا در تولید لوگو.")
+
+        return ConversationHandler.END
+            
 # --- مربی و آنالیزور ---
 async def coach_start(update, context):
     await update.message.reply_text("🧠 متن ایده را بفرستید یا (ویژه VIP 💎) عکس کاور را جهت تحلیل بفرستید.")
